@@ -1,0 +1,13 @@
+<Project>
+  <!-- Every project here compiles sources from UnityPackage, under the same language rules Unity applies to them. -->
+  <PropertyGroup>
+    <PackageRoot>$(MSBuildThisFileDirectory)..\UnityPackage\</PackageRoot>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

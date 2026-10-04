@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The package's pure core, built outside Unity so a Unity-only API can never slip into it unnoticed. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>reromanlee.ReactiveLocalizer</AssemblyName>
+    <RootNamespace>reromanlee.ReactiveLocalizer</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(PackageRoot)Core\**\*.cs" />
+  </ItemGroup>
+</Project>

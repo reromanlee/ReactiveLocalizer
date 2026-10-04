@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/Package/">
+    <Project Path="Core/Core.csproj" />
+    <Project Path="Authoring/Authoring.csproj" />
+  </Folder>
+</Solution>
