@@ -67,9 +67,10 @@ A catalog is a self-contained localization unit: its languages, its settings and
 1. A `.catalog` file claims every table in its folder and below, the way an asmdef claims scripts.
 2. Tables outside any catalog belong to the project's default catalog, the way scripts outside any asmdef end up in Assembly-CSharp.
 3. The default catalog is created on first use as `Assets/Localization/Localization.catalog`. Its generated classes are `LocalizationKeys` and `LocalizationLanguages`. Creating it asks for the source language, defaulting to `English` with culture `en`.
-4. Packages and editor tools ship their own catalog, so their tables and languages never mix with the game's.
-5. A catalog inside an `Editor` folder is editor-only and is never packed into player builds.
-6. Table names are unique within a catalog.
+4. The default catalog is the one at `Assets/Localization/Localization.catalog` when that file exists, so importing a sample that brings its own catalog changes nothing. Otherwise it is the only catalog in Assets outside an Editor folder. When neither applies, tables outside every catalog folder are reported instead of guessed.
+5. Packages and editor tools ship their own catalog, so their tables and languages never mix with the game's.
+6. A catalog inside an `Editor` folder is editor-only and is never packed into player builds.
+7. Table names are unique within a catalog.
 
 The catalog file uses the table syntax (section 5.3), with one `[Language]` section per language:
 
@@ -105,7 +106,7 @@ Fallback = English
 1. An entry is identified by `Table` + `Key` everywhere: in files, generated code, serialized component fields and lookups from project data. Files carry no hidden IDs.
 2. Names (catalogs, tables, keys, languages) are ASCII letters, digits and underscores, start with a letter, and are unique regardless of case. Any table can therefore turn on code generation at any time. Numeric data IDs need a prefix, such as `Item10234`.
 3. The PascalCase, no-underscore convention from LockInGoals is an optional validator rule, not a package-wide restriction.
-4. At runtime every name becomes a 64-bit FNV-1a hash of its UTF-16LE bytes, with ASCII letters lowercased first. Lookups therefore ignore case, which matches the uniqueness rule. Generated keys carry hashes computed ahead of time. String lookups hash a `ReadOnlySpan<char>` without allocating. Import fails if two names in one scope produce the same hash. Golden-value tests pin the function.
+4. At runtime every name becomes a 64-bit FNV-1a hash of its UTF-16LE bytes, with ASCII letters lowercased first. Lookups therefore ignore case, which matches the uniqueness rule. Generated keys compute their hashes once, when their class initializes, never per lookup. String lookups hash a `ReadOnlySpan<char>` without allocating. Import fails if two names in one scope produce the same hash. Golden-value tests pin the function.
 5. **Renames never break anything.**
    1. The rename tool updates every language file of the table.
    2. It leaves `@formerly OldName` on the entry. Moving an entry to another table leaves `@formerly OldTable.OldName`.
@@ -263,7 +264,7 @@ Purchase [3fa2c1] = Купить
    binding.Dispose();
    ```
 
-   1. It applies the text immediately, then again whenever the text changes: a language switch, an `OnDemand` table arriving, a table file edited in the editor (live, in Play and Edit Mode), or new arguments via `binding.SetMessage(...)`.
+   1. It applies the text immediately, then again whenever the text changes: a language switch, an `OnDemand` table arriving, a table file edited in the editor (live, in Play and Edit Mode, arriving with the editor tooling of step 4), or new arguments via `binding.SetMessage(...)`.
    2. Binding and updating allocate nothing. The handle is a struct, and the callback is a static lambda that receives its target as state. The callback can take the text as a `string` or as characters.
    3. Disposing a stale or copied handle is a safe no-op.
    4. A binding keeps its `OnDemand` table loaded while it's alive.
@@ -360,15 +361,17 @@ Purchase [3fa2c1] = Купить
 
 ### 12.4 Inspector field
 
-1. **`EntryReference`** is the serializable field type. It lives in the Unity layer, stores the table and key as names, and belongs to the default catalog. A field that uses another catalog names it: `[EntryCatalog(typeof(ToolWindowKeys))]`.
-2. **The field shows `Shop ▾ Purchase`** with a text preview in the current preview language.
-3. **Clicking it opens a search popup.** It searches keys *and* text, shows recent picks first, and only renders visible results.
-4. **Creating entries on the spot.** When nothing matches, the popup offers to create the entry.
+1. **`EntryReference`** is the serializable field type. It lives in the Unity layer and stores the catalog, table and key as names. The Inspector fills the catalog in when an entry is picked, so a reusable component works with whichever catalog its entry comes from. `[EntryCatalog(typeof(ToolWindowKeys))]` limits a field's dropdown to one catalog.
+2. **`CatalogReference`** is the field type for components that work with a whole catalog, such as a language picker. Empty means the default catalog.
+3. **The field shows `Shop ▾ Purchase`** with a text preview in the current preview language.
+4. **Clicking it opens a search popup.** It searches keys *and* text, shows recent picks first, and only renders visible results.
+5. **Creating entries on the spot.** When nothing matches, the popup offers to create the entry.
    1. The table defaults to the one named after the prefab or scene being edited, then the last used one, or the user types a new table name.
    2. The key is suggested from the GameObject's name, with UI suffixes stripped (`TitleLabel` → `Title`). It's never suggested from the English text, because entries are named after their role.
    3. Creating an entry writes only the source file, so there's no recompile.
-5. **Broken references show red.** When a renamed key's alias resolves, the field offers to update itself.
-6. **The field is drawn in both UI Toolkit and IMGUI inspectors.**
+   4. `EntryAuthoring` is the public editor API behind it, so samples and project tools create entries the same way.
+6. **Broken references show red.** When a renamed key's alias resolves, the field offers to update itself.
+7. **The field is drawn in both UI Toolkit and IMGUI inspectors.**
 
 ### 12.5 Scene view overlay
 
@@ -443,7 +446,8 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
 | Binding and observable | `TextBinding` (struct), `ReactiveText` (class) |
 | On-demand table hold | `TableHandle` |
 | Table sources | `EmbeddedTableSource`, `StreamingTableSource`, and in samples `AddressablesTableSource`, `ModFolderTableSource` |
-| Inspector field | `EntryReference`, `[EntryCatalog(typeof(...))]` |
+| Inspector fields | `EntryReference`, `CatalogReference`, `[EntryCatalog(typeof(...))]` |
+| Editor authoring API | `EntryAuthoring` |
 | Generated code | `LocalizationKeys`, `LocalizationLanguages` |
 | Sample access point | `GlobalLocalizer.Instance` |
 | File attributes | `@source`, `@namespace`, `@formerly`, `@maximumLength`, `@loading`, `@delivery`, `@generateCode` |

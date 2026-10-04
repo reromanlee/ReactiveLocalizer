@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Runs the core's Unity test sources under plain .NET. NUnit stays on 3.x, the closest to Unity's NUnit 3.5:
+       NUnit 4 adds Action and Func overloads that make every lambda assertion ambiguous under C# 9. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>reromanlee.ReactiveLocalizer.Tests.Core</AssemblyName>
+    <RootNamespace>reromanlee.ReactiveLocalizer.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(PackageRoot)Tests\Core\**\*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="6.3.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Core\Core.csproj" />
+  </ItemGroup>
+</Project>

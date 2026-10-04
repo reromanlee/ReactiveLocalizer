@@ -1,0 +1,8 @@
+# Greets whoever opened the sample.
+Greeting = Hello! Pick a language on the left, and every text here follows at once.
+
+# Explains where these texts come from.
+Hint = These texts live in the .lang files next to this sample. Edit one, save it, and enter Play Mode again.
+
+# The heading at the top of the screen.
+Title = ReactiveLocalizer Quick Start

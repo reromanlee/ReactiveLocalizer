@@ -25,5 +25,16 @@
     "url": "https://github.com/reromanlee",
     "email": "contact@reromanlee.com"
   },
-  "samples": []
+  "samples": [
+    {
+      "displayName": "Quick Start",
+      "description": "Everything a prototype needs: GlobalLocalizer, a project-wide access point that remembers the player's language and maps the OS language; a language picker; and a scene whose texts follow every switch, in English, Russian and an invented Pirate language that falls back to English.",
+      "path": "Samples~/QuickStart"
+    },
+    {
+      "displayName": "TextMeshPro",
+      "description": "A component that shows an entry in a TextMeshPro text through every language switch, and a Localize action in the text's context menu that turns its current text into a new entry in one click. Import Quick Start first.",
+      "path": "Samples~/TextMeshPro"
+    }
+  ]
 }

@@ -115,3 +115,75 @@ jobs:
         with:
           name: Test results on ${{ matrix.unityVersion }}
           path: artifacts
+
+  builds:
+    name: ${{ matrix.targetPlatform }} build on ${{ matrix.unityVersion }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Tier 1 platforms on the oldest and the newest supported Unity. TextMeshPro is its own package on 2022.3
+          # and part of uGUI on Unity 6; with it, the TextMeshPro sample compiles into every build.
+          - unityVersion: 2022.3.62f3
+            targetPlatform: WebGL
+            samplePackages: '{"com.unity.textmeshpro": "3.0.9", "com.unity.ugui": "1.0.0"}'
+          - unityVersion: 2022.3.62f3
+            targetPlatform: Android
+            samplePackages: '{"com.unity.textmeshpro": "3.0.9", "com.unity.ugui": "1.0.0"}'
+          - unityVersion: 6000.5.11f1
+            targetPlatform: WebGL
+            samplePackages: '{"com.unity.ugui": "2.0.0"}'
+          - unityVersion: 6000.5.11f1
+            targetPlatform: Android
+            samplePackages: '{"com.unity.ugui": "2.0.0"}'
+          # Tier 2 platforms, checked to build on the newest Unity.
+          - unityVersion: 6000.5.11f1
+            targetPlatform: iOS
+            samplePackages: '{"com.unity.ugui": "2.0.0"}'
+          - unityVersion: 6000.5.11f1
+            targetPlatform: StandaloneOSX
+            samplePackages: '{"com.unity.ugui": "2.0.0"}'
+          - unityVersion: 6000.5.11f1
+            targetPlatform: StandaloneLinux64
+            samplePackages: '{"com.unity.ugui": "2.0.0"}'
+    steps:
+      - name: Free disk space for the Unity image
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        with:
+          large-packages: false
+
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Without it, Unity takes the project for a new one and adds its template packages to the manifest.
+      - name: Set the Unity version of the project
+        env:
+          UNITY_VERSION: ${{ matrix.unityVersion }}
+        run: |
+          mkdir -p UnityProject/ProjectSettings UnityProject/Assets
+          printf 'm_EditorVersion: %s\n' "$UNITY_VERSION" > UnityProject/ProjectSettings/ProjectVersion.txt
+
+      # Leaves only built-in modules, the local package and what the samples need, so a build never waits on the
+      # registry for test-only packages.
+      - name: Swap the test-only packages for the samples' ones
+        env:
+          SAMPLE_PACKAGES: ${{ matrix.samplePackages }}
+        run: |
+          manifest=UnityProject/Packages/manifest.json
+          jq --argjson packages "$SAMPLE_PACKAGES" 'del(.dependencies["com.unity.test-framework.performance"]) | del(.testables) | .dependencies += $packages' "$manifest" > manifest.tmp
+          mv manifest.tmp "$manifest"
+
+      - name: Add the package samples to the project
+        run: cp -r UnityPackage/Samples~ UnityProject/Assets/Samples
+
+      # Only checks that the player builds; nothing is uploaded or released.
+      - name: Build the Quick Start sample
+        uses: game-ci/unity-builder@adaf7cd8f42fd48fbbf2d4f5f67ca30d87f819f1 # v5.0.1
+        with:
+          unityVersion: ${{ matrix.unityVersion }}
+          targetPlatform: ${{ matrix.targetPlatform }}
+          projectPath: UnityProject
+          buildMethod: reromanlee.ReactiveLocalizer.ContinuousIntegration.PlayerBuild.Build
+          versioning: None
