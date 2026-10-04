@@ -1,0 +1,18 @@
+{
+    "name": "reromanlee.ReactiveLocalizer.Authoring",
+    "rootNamespace": "reromanlee.ReactiveLocalizer.Authoring",
+    "references": [
+        "reromanlee.ReactiveLocalizer"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

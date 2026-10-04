@@ -1,0 +1,14 @@
+{
+    "name": "reromanlee.ReactiveLocalizer",
+    "rootNamespace": "reromanlee.ReactiveLocalizer",
+    "references": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}
