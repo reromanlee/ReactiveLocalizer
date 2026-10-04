@@ -1,0 +1,18 @@
+{
+  "name": "com.reromanlee.reactivelocalizer",
+  "version": "1.0.0",
+  "displayName": "ReactiveLocalizer",
+  "description": "",
+  "unity": "2022.3",
+  "license": "MIT",
+  "documentationUrl": "https://github.com/reromanlee/ReactiveLocalizer#readme",
+  "changelogUrl": "https://github.com/reromanlee/ReactiveLocalizer/blob/main/CHANGELOG.md",
+  "keywords": [],
+  "licensesUrl": "https://github.com/reromanlee/ReactiveLocalizer/blob/main/LICENSE.md",
+  "author": {
+    "name": "Roman Likhadievski",
+    "url": "https://github.com/reromanlee",
+    "email": "contact@reromanlee.com"
+  },
+  "samples": []
+}
