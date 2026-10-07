@@ -8,6 +8,10 @@
 ## NuGet Packages
 *.nupkg
 
+## .NET build output of the DotNet lane
+DotNet/**/bin/
+DotNet/**/obj/
+
 ## IDE - Visual Studio
 .vs/
 *.suo

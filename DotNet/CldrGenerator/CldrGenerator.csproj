@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Writes the core's CLDR data, plural rules and number symbols, plus the test samples that check them. Its output
+       is committed; run it only to move to another CLDR release, from the repository root, with "dotnet run" and
+       this project. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>CldrGenerator</AssemblyName>
+    <RootNamespace>reromanlee.ReactiveLocalizer.CldrGenerator</RootNamespace>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+  </PropertyGroup>
+</Project>

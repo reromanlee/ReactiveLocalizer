@@ -1,0 +1,5 @@
+# Hint is left out on purpose: Pirate falls back to English for it.
+AddCoin [d78adf] = Grab a doubloon
+Coins [315ddb] = Ye be holdin' {coins, plural, =0 {nary a doubloon} one {# doubloon} other {# doubloons}}.
+Greeting [08d882] = Ahoy! Pick yer tongue on the port side, an' every word here follows smartly.
+Title [3daa1c] = ReactiveLocalizer: Settin' Sail

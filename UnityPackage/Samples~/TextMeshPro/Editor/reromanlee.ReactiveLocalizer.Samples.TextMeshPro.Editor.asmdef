@@ -1,0 +1,35 @@
+{
+    "name": "reromanlee.ReactiveLocalizer.Samples.TextMeshPro.Editor",
+    "rootNamespace": "reromanlee.ReactiveLocalizer.Samples.TextMeshPro.Editor",
+    "references": [
+        "reromanlee.ReactiveLocalizer",
+        "reromanlee.ReactiveLocalizer.Unity",
+        "reromanlee.ReactiveLocalizer.Editor",
+        "reromanlee.ReactiveLocalizer.Samples.TextMeshPro",
+        "Unity.TextMeshPro"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "REACTIVE_LOCALIZER_TEXTMESHPRO"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.textmeshpro",
+            "expression": "3.0.0",
+            "define": "REACTIVE_LOCALIZER_TEXTMESHPRO"
+        },
+        {
+            "name": "com.unity.ugui",
+            "expression": "2.0.0",
+            "define": "REACTIVE_LOCALIZER_TEXTMESHPRO"
+        }
+    ],
+    "noEngineReferences": false
+}

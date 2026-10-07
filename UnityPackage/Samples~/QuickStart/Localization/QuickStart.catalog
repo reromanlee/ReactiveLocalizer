@@ -1,0 +1,15 @@
+# The languages of the Quick Start sample. Pirate is invented: it has no culture, and falls back to English.
+
+@source English
+
+[English]
+DisplayName = English
+Culture = en
+
+[Russian]
+DisplayName = Русский
+Culture = ru
+
+[Pirate]
+DisplayName = Pirate Speak
+Fallback = English

@@ -1,0 +1,17 @@
+{
+    "name": "reromanlee.ReactiveLocalizer.Samples.QuickStart",
+    "rootNamespace": "reromanlee.ReactiveLocalizer.Samples.QuickStart",
+    "references": [
+        "reromanlee.ReactiveLocalizer",
+        "reromanlee.ReactiveLocalizer.Unity"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

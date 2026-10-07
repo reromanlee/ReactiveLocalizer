@@ -1,0 +1,15 @@
+## What Unity generates when it opens the project
+/Library/
+/Logs/
+/Temp/
+/UserSettings/
+/obj/
+/Build/
+/ProjectSettings/
+/Packages/packages-lock.json
+*.csproj
+*.sln
+
+## Package samples, copied in by continuous integration or imported with the Package Manager
+/Assets/Samples/
+/Assets/Samples.meta
