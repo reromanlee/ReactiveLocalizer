@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Runs the authoring assembly's Unity test sources under plain .NET, like the core's. -->
+  <!-- Runs the authoring assembly's Unity test sources under plain .NET, like the core's, plus tests that only plain
+       .NET can run, such as compiling generated code with Roslyn. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>reromanlee.ReactiveLocalizer.Tests.Authoring</AssemblyName>
@@ -7,8 +8,10 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="$(PackageRoot)Tests\Authoring\**\*.cs" />
+    <Compile Include="*.cs" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
     <PackageReference Include="NUnit" Version="3.14.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="6.3.0" />

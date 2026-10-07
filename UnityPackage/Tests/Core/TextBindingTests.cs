@@ -181,5 +181,14 @@ namespace reromanlee.ReactiveLocalizer.Tests
             Assert.That(() => { localizer.Bind<List<string>>(Purchase, null, static (target, text) => target.Add(text)); }, Throws.TypeOf<ArgumentNullException>());
             Assert.That(() => { localizer.Bind(Purchase, new List<string>(), null); }, Throws.TypeOf<ArgumentNullException>());
         }
+
+        [Test]
+        public void BindAndDispose_AllocateNothing()
+        {
+            using Localizer localizer = CreateInitialized(out _, out _);
+            object target = new();
+
+            Allocations.AssertNone(() => localizer.Bind(Purchase, target, static (label, text) => { }).Dispose());
+        }
     }
 }

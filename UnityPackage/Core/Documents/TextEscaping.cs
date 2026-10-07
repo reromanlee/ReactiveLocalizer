@@ -86,6 +86,38 @@ namespace reromanlee.ReactiveLocalizer.Documents
         }
 
         /// <summary>
+        /// Returns where, in a value as written, the character at <paramref name="valueIndex"/> of its resolved text
+        /// starts, mirroring <see cref="Unescape"/>, so problems found in the text are reported at the right column.
+        /// </summary>
+        public static int FindWrittenOffset(ReadOnlySpan<char> written, int valueIndex)
+        {
+            int position = 0;
+            for (int index = 0; index < valueIndex && position < written.Length; index++)
+            {
+                if (written[position] != '\\' || position + 1 >= written.Length)
+                {
+                    position++;
+                    continue;
+                }
+                char escape = written[position + 1];
+                if (escape == 'n' || escape == 't' || escape == '\\')
+                {
+                    position += 2;
+                }
+                else if (escape == 'u' && TryReadUnicodeEscape(written, position + 2, out _))
+                {
+                    position += 6;
+                }
+                else
+                {
+                    // An unknown or malformed escape is kept as written: its backslash is a character of the text too.
+                    position++;
+                }
+            }
+            return position;
+        }
+
+        /// <summary>
         /// Appends <paramref name="value"/> to <paramref name="builder"/> in its canonical written form: line breaks,
         /// tabs and backslashes escaped, invisible characters as <c>\uXXXX</c>, and spaces at either end escaped so
         /// trimming never removes them.

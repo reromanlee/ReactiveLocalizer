@@ -89,9 +89,11 @@ namespace reromanlee.ReactiveLocalizer.Editor
         /// <summary>
         /// Returns what the catalog's generated code is made of. The namespace is the catalog's <c>@namespace</c>, else
         /// the root namespace of the assembly owning the catalog's folder, else the project's root namespace.
+        /// <paramref name="brokenMessage"/> names the first source entry whose message has errors, or is null.
         /// </summary>
-        public KeysScript CreateKeysScript()
+        public KeysScript CreateKeysScript(out string brokenMessage)
         {
+            brokenMessage = null;
             List<string> languages = new();
             if (Info != null)
             {
@@ -108,13 +110,18 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 {
                     continue;
                 }
-                List<string> entries = new();
+                List<KeysScriptEntry> entries = new();
                 List<KeyValuePair<string, string>> aliases = new();
                 IReadOnlyList<TableDocumentEntry> documentEntries = table.SourceDocument.Entries;
                 for (int e = 0; e < documentEntries.Count; e++)
                 {
                     TableDocumentEntry entry = documentEntries[e];
-                    entries.Add(entry.Key);
+                    KeysScriptEntry scriptEntry = KeysScriptEntry.FromSource(entry.Key, entry.Value);
+                    entries.Add(scriptEntry);
+                    if (scriptEntry.HasMessageErrors && brokenMessage == null)
+                    {
+                        brokenMessage = $"'{table.Name}.{entry.Key}' in {table.SourcePath}, line {entry.Line}";
+                    }
                     for (int a = 0; a < entry.Attributes.Count; a++)
                     {
                         if (entry.Attributes[a].Name == DocumentNames.Formerly && NameRules.IsValid(entry.Attributes[a].Value))

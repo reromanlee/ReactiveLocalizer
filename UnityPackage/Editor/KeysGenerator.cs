@@ -56,7 +56,15 @@ namespace reromanlee.ReactiveLocalizer.Editor
                     continue;
                 }
                 List<string> problems = new();
-                string source = KeysScriptWriter.Write(catalog.CreateKeysScript(), problems);
+                KeysScript script = catalog.CreateKeysScript(out string brokenMessage);
+                // A broken message has no known arguments; keeping the last generated code means a typo in a text
+                // never breaks the code calling it. A catalog without generated code yet gets it anyway.
+                if (brokenMessage != null && File.Exists(catalog.GeneratedCodePath))
+                {
+                    Debug.LogWarning($"[ReactiveLocalizer] {catalog.GeneratedCodePath} keeps its current members until the message of {brokenMessage} is fixed.");
+                    continue;
+                }
+                string source = KeysScriptWriter.Write(script, problems);
                 for (int i = 0; i < problems.Count; i++)
                 {
                     Debug.LogWarning($"[ReactiveLocalizer] {catalog.Path}: {problems[i]}");

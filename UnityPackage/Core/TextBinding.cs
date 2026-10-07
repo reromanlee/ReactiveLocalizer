@@ -27,6 +27,19 @@ namespace reromanlee.ReactiveLocalizer
         /// <summary>Whether the binding still receives text: neither disposed nor released with its localizer or target.</summary>
         public bool IsActive => _registry != null && _registry.IsActive(_index, _generation);
 
+        /// <summary>
+        /// Shows <paramref name="message"/> from now on: formats it right away when it differs from what the binding
+        /// shows, and does nothing when it is equal, so calling it every frame with the same arguments costs nothing.
+        /// </summary>
+        /// <remarks>
+        /// Works on bindings of keys too, which then show the message. From a thread other than the host's, the change
+        /// is applied on the host's next update. A stale or default handle ignores it.
+        /// </remarks>
+        public void SetMessage(in EntryMessage message)
+        {
+            _registry?.SetMessage(_index, _generation, in message);
+        }
+
         /// <summary>Stops the binding. Safe to call any number of times, from any thread.</summary>
         public void Dispose()
         {

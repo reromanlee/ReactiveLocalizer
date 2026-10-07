@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEditor;
 
 namespace reromanlee.ReactiveLocalizer.Editor
@@ -10,7 +11,9 @@ namespace reromanlee.ReactiveLocalizer.Editor
     /// </summary>
     internal sealed class LocalizationPostprocessor : AssetPostprocessor
     {
+        private static readonly HashSet<string> TranslationsToImport = new(StringComparer.Ordinal);
         private static bool _isRefreshScheduled;
+        private static bool _isTranslationImportScheduled;
 
         private static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths)
         {
@@ -31,8 +34,97 @@ namespace reromanlee.ReactiveLocalizer.Editor
             }
             if (hasCatalogChanged || hasTableChanged)
             {
+                CatalogLayout.ForgetTableFiles();
                 CatalogIndex.Invalidate();
                 KeysGenerator.Schedule();
+            }
+            if (hasTableChanged)
+            {
+                ScheduleTranslationImports(importedAssets, movedAssets);
+            }
+        }
+
+        /// <summary>
+        /// Queues the translations of every source-language file that just arrived, unless they were imported along
+        /// with it: a translation imported before its source existed has never been checked against it.
+        /// </summary>
+        private static void ScheduleTranslationImports(string[] importedAssets, string[] movedAssets)
+        {
+            HashSet<string> imported = new(importedAssets, StringComparer.Ordinal);
+            foreach (string path in Concatenate(importedAssets, movedAssets))
+            {
+                if (!LocalizationFiles.TryParseTableFileName(path, out string tableName, out string languageName))
+                {
+                    continue;
+                }
+                IndexedCatalog catalog = FindCatalog(path);
+                if (catalog?.Info == null || !string.Equals(catalog.Info.SourceLanguage.Name, languageName, StringComparison.OrdinalIgnoreCase) ||
+                    !catalog.TryGetTable(new TableKey(tableName), out IndexedTable table))
+                {
+                    continue;
+                }
+                foreach (string translation in table.FilePaths)
+                {
+                    if (translation != path && !imported.Contains(translation))
+                    {
+                        TranslationsToImport.Add(translation);
+                    }
+                }
+            }
+            if (TranslationsToImport.Count == 0 || _isTranslationImportScheduled)
+            {
+                return;
+            }
+            _isTranslationImportScheduled = true;
+            EditorApplication.delayCall += ImportTranslations;
+        }
+
+        private static void ImportTranslations()
+        {
+            _isTranslationImportScheduled = false;
+            string[] paths = new string[TranslationsToImport.Count];
+            TranslationsToImport.CopyTo(paths);
+            TranslationsToImport.Clear();
+            AssetDatabase.StartAssetEditing();
+            try
+            {
+                foreach (string path in paths)
+                {
+                    AssetDatabase.ImportAsset(path);
+                }
+            }
+            finally
+            {
+                AssetDatabase.StopAssetEditing();
+            }
+        }
+
+        private static IndexedCatalog FindCatalog(string tablePath)
+        {
+            string catalogPath = CatalogLayout.FindOwner(tablePath);
+            if (catalogPath == null)
+            {
+                return null;
+            }
+            foreach (IndexedCatalog catalog in CatalogIndex.Catalogs)
+            {
+                if (catalog.Path == catalogPath)
+                {
+                    return catalog;
+                }
+            }
+            return null;
+        }
+
+        private static IEnumerable<string> Concatenate(string[] first, string[] second)
+        {
+            foreach (string path in first)
+            {
+                yield return path;
+            }
+            foreach (string path in second)
+            {
+                yield return path;
             }
         }
 

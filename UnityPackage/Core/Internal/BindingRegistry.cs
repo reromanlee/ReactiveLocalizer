@@ -10,7 +10,9 @@ namespace reromanlee.ReactiveLocalizer.Internal
     /// <remarks>
     /// Adding and releasing are safe from any thread. Applying text happens on the host thread only, outside the lock,
     /// so a callback may bind, release or even switch the language without deadlocking. A slot's generation changes
-    /// whenever it is released, which turns a stale or copied handle into a harmless no-op.
+    /// whenever it is released, which turns a stale or copied handle into a harmless no-op. The arguments of message
+    /// bindings live in pooled holders that only the host thread recycles, so a binding released from another thread
+    /// can never change the message the host thread is formatting.
     /// </remarks>
     internal sealed class BindingRegistry
     {
@@ -22,6 +24,10 @@ namespace reromanlee.ReactiveLocalizer.Internal
         private int _freeHead = -1;
         private int _activeCount;
         private bool _isRefreshing;
+
+        // Holders ready to take a message, and holders released since the host thread last recycled them.
+        private BoundMessage _freeMessages;
+        private BoundMessage _retiredMessages;
 
         public BindingRegistry(Localizer localizer)
         {
@@ -35,29 +41,19 @@ namespace reromanlee.ReactiveLocalizer.Internal
         {
             lock (_lockObject)
             {
-                if (_freeHead >= 0)
-                {
-                    index = _freeHead;
-                    _freeHead = _slots[index].NextFree;
-                }
-                else
-                {
-                    if (_highWater == _slots.Length)
-                    {
-                        Array.Resize(ref _slots, _slots.Length * 2);
-                    }
-                    index = _highWater;
-                    _highWater++;
-                }
-                ref Slot slot = ref _slots[index];
-                slot.IsActive = true;
-                slot.NextFree = -1;
-                slot.Key = key;
-                slot.Target = target;
-                slot.Apply = apply;
-                slot.Invoker = invoker;
-                generation = slot.Generation;
-                _activeCount++;
+                index = AddSlot(in key, target, apply, invoker, null);
+                generation = _slots[index].Generation;
+            }
+        }
+
+        public void Add(in EntryMessage message, object target, Delegate apply, BindingInvoker invoker, out int index, out int generation)
+        {
+            lock (_lockObject)
+            {
+                BoundMessage bound = RentMessage();
+                bound.Value = message;
+                index = AddSlot(message.Key, target, apply, invoker, bound);
+                generation = _slots[index].Generation;
             }
         }
 
@@ -75,15 +71,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 {
                     return false;
                 }
-                slot.IsActive = false;
-                slot.Generation++;
-                slot.Key = default;
-                slot.Target = null;
-                slot.Apply = null;
-                slot.Invoker = null;
-                slot.NextFree = _freeHead;
-                _freeHead = index;
-                _activeCount--;
+                ReleaseSlot(index);
                 return true;
             }
         }
@@ -96,12 +84,33 @@ namespace reromanlee.ReactiveLocalizer.Internal
             }
         }
 
+        /// <summary>
+        /// Makes a binding show <paramref name="message"/>, formatting it right away when it differs from what the
+        /// binding shows. From another thread, the change is queued for the host thread.
+        /// </summary>
+        public void SetMessage(int index, int generation, in EntryMessage message)
+        {
+            if (!_localizer.IsOnHostThread)
+            {
+                QueueSetMessage(index, generation, message);
+                return;
+            }
+            SetMessageOnHost(index, generation, in message);
+        }
+
+        // A method of its own, because a lambda in SetMessage would make every call allocate its closure, even on the host thread.
+        private void QueueSetMessage(int index, int generation, EntryMessage message)
+        {
+            _localizer.RunOnHostLater(() => SetMessageOnHost(index, generation, in message));
+        }
+
         /// <summary>Applies the current text to one binding. Host thread only.</summary>
         public void Apply(int index, int generation)
         {
             Pending pending;
             lock (_lockObject)
             {
+                RecycleMessages();
                 if ((uint)index >= (uint)_highWater || !_slots[index].IsActive || _slots[index].Generation != generation)
                 {
                     return;
@@ -118,6 +127,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
             int count = 0;
             lock (_lockObject)
             {
+                RecycleMessages();
                 // A callback that switches the language refreshes again while this refresh is running, so a nested
                 // refresh takes a buffer of its own instead of overwriting the one being walked.
                 buffer = _isRefreshing ? new Pending[Math.Max(_activeCount, 1)] : EnsureRefreshBuffer(_activeCount);
@@ -161,20 +171,107 @@ namespace reromanlee.ReactiveLocalizer.Internal
             {
                 for (int i = 0; i < _highWater; i++)
                 {
-                    ref Slot slot = ref _slots[i];
-                    if (slot.IsActive)
+                    if (_slots[i].IsActive)
                     {
-                        slot.IsActive = false;
-                        slot.Generation++;
-                        slot.Key = default;
-                        slot.Target = null;
-                        slot.Apply = null;
-                        slot.Invoker = null;
-                        slot.NextFree = _freeHead;
-                        _freeHead = i;
+                        ReleaseSlot(i);
                     }
                 }
                 _activeCount = 0;
+            }
+        }
+
+        private int AddSlot(in EntryKey key, object target, Delegate apply, BindingInvoker invoker, BoundMessage message)
+        {
+            int index;
+            if (_freeHead >= 0)
+            {
+                index = _freeHead;
+                _freeHead = _slots[index].NextFree;
+            }
+            else
+            {
+                if (_highWater == _slots.Length)
+                {
+                    Array.Resize(ref _slots, _slots.Length * 2);
+                }
+                index = _highWater;
+                _highWater++;
+            }
+            ref Slot slot = ref _slots[index];
+            slot.IsActive = true;
+            slot.NextFree = -1;
+            slot.Key = key;
+            slot.Target = target;
+            slot.Apply = apply;
+            slot.Invoker = invoker;
+            slot.Message = message;
+            _activeCount++;
+            return index;
+        }
+
+        private void ReleaseSlot(int index)
+        {
+            ref Slot slot = ref _slots[index];
+            slot.IsActive = false;
+            slot.Generation++;
+            slot.Key = default;
+            slot.Target = null;
+            slot.Apply = null;
+            slot.Invoker = null;
+            if (slot.Message != null)
+            {
+                // The host thread may be formatting this message right now; it recycles the holder once it isn't.
+                slot.Message.NextFree = _retiredMessages;
+                _retiredMessages = slot.Message;
+                slot.Message = null;
+            }
+            slot.NextFree = _freeHead;
+            _freeHead = index;
+            _activeCount--;
+        }
+
+        private void SetMessageOnHost(int index, int generation, in EntryMessage message)
+        {
+            lock (_lockObject)
+            {
+                if ((uint)index >= (uint)_highWater || !_slots[index].IsActive || _slots[index].Generation != generation)
+                {
+                    return;
+                }
+                ref Slot slot = ref _slots[index];
+                if (slot.Message != null && slot.Message.Value.Equals(message))
+                {
+                    return;
+                }
+                slot.Message ??= RentMessage();
+                slot.Message.Value = message;
+                slot.Key = message.Key;
+            }
+            Apply(index, generation);
+        }
+
+        private BoundMessage RentMessage()
+        {
+            BoundMessage message = _freeMessages;
+            if (message == null)
+            {
+                return new BoundMessage();
+            }
+            _freeMessages = message.NextFree;
+            message.NextFree = null;
+            return message;
+        }
+
+        /// <summary>Moves released holders to the free list. Host thread only, and never while a message is formatted.</summary>
+        private void RecycleMessages()
+        {
+            while (_retiredMessages != null)
+            {
+                BoundMessage message = _retiredMessages;
+                _retiredMessages = message.NextFree;
+                message.Value = default;
+                message.NextFree = _freeMessages;
+                _freeMessages = message;
             }
         }
 
@@ -188,7 +285,9 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 }
                 return;
             }
-            string text = _localizer.ResolveBindingText(pending.Key);
+            string text = pending.Message != null
+                ? _localizer.ResolveBindingText(in pending.Message.Value)
+                : _localizer.ResolveBindingText(pending.Key);
             try
             {
                 pending.Invoker(pending.Target, pending.Apply, text);
@@ -209,6 +308,13 @@ namespace reromanlee.ReactiveLocalizer.Internal
             return _refreshBuffer;
         }
 
+        /// <summary>Holds the arguments of a message binding, outside the slots, so plain bindings stay small.</summary>
+        private sealed class BoundMessage
+        {
+            public EntryMessage Value;
+            public BoundMessage NextFree;
+        }
+
         private struct Slot
         {
             public int Generation;
@@ -218,6 +324,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
             public object Target;
             public Delegate Apply;
             public BindingInvoker Invoker;
+            public BoundMessage Message;
         }
 
         private readonly struct Pending
@@ -230,6 +337,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 Target = slot.Target;
                 Apply = slot.Apply;
                 Invoker = slot.Invoker;
+                Message = slot.Message;
             }
 
             public int Index { get; }
@@ -243,6 +351,8 @@ namespace reromanlee.ReactiveLocalizer.Internal
             public Delegate Apply { get; }
 
             public BindingInvoker Invoker { get; }
+
+            public BoundMessage Message { get; }
         }
     }
 }

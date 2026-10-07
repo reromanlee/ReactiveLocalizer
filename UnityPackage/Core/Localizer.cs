@@ -1,5 +1,7 @@
+using reromanlee.ReactiveLocalizer.Formatting;
 using reromanlee.ReactiveLocalizer.Hosting;
 using reromanlee.ReactiveLocalizer.Internal;
+using reromanlee.ReactiveLocalizer.Messages;
 using reromanlee.ReactiveLocalizer.Tables;
 using System;
 using System.Collections.Concurrent;
@@ -27,6 +29,7 @@ namespace reromanlee.ReactiveLocalizer
         private readonly ILocalizerHost _host;
         private readonly BindingRegistry _bindings;
         private readonly MissingKeys _missingKeys = new();
+        private readonly ReportedProblems _reportedProblems = new();
         private readonly ConcurrentQueue<Action> _hostActions = new();
         private readonly Action _update;
         private readonly Action<TableReceiver> _onReceived;
@@ -35,6 +38,7 @@ namespace reromanlee.ReactiveLocalizer
         // Published for every thread: lookups read the state, and the catalog is shown once it is loaded.
         private LocalizerState _state = LocalizerState.Empty;
         private CatalogInfo _publishedCatalog;
+        private FormatterTable _formatters = FormatterTable.Empty;
 
         // Host thread only.
         private readonly List<TaskCompletionSource<bool>> _initialWaiters = new();
@@ -176,11 +180,66 @@ namespace reromanlee.ReactiveLocalizer
                 ReportEmptyKey();
                 return string.Empty;
             }
-            if (state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index))
+            if (state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out _))
             {
+                ReportIfMessage(table, index, key.Table.Name, key.Name);
                 return table.GetString(index);
             }
             return GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
+        }
+
+        /// <inheritdoc/>
+        public string Get(in EntryMessage message)
+        {
+            LocalizerState state = Volatile.Read(ref _state);
+            if (!state.IsInitialized)
+            {
+                ReportEarlyRead();
+                return string.Empty;
+            }
+            return Format(state, in message, true);
+        }
+
+        /// <inheritdoc/>
+        public bool TryFormat(in EntryMessage message, Span<char> destination, out int written)
+        {
+            written = 0;
+            LocalizerState state = Volatile.Read(ref _state);
+            if (!state.IsInitialized)
+            {
+                ReportEarlyRead();
+                return true;
+            }
+            EntryKey key = message.Key;
+            if (key.IsEmpty)
+            {
+                ReportEmptyKey();
+                return true;
+            }
+            if (!state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out int languageIndex))
+            {
+                return TryCopy(GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash).AsSpan(), destination, out written);
+            }
+            if (!table.TryGetMessage(index, out int start))
+            {
+                return TryCopy(table.GetMemory(index).Span, destination, out written);
+            }
+            // The message is written straight into the caller's buffer; it fits when it never had to grow out of it.
+            TextBuilder output = new(destination);
+            try
+            {
+                Render(state, table, start, languageIndex, in message, ref output);
+                if (output.HasOutgrownInitialBuffer)
+                {
+                    return false;
+                }
+                written = output.Length;
+                return true;
+            }
+            finally
+            {
+                output.Dispose();
+            }
         }
 
         /// <inheritdoc/>
@@ -194,8 +253,9 @@ namespace reromanlee.ReactiveLocalizer
             }
             ulong tableHash = Hashing.ComputeNameHash(tableName);
             ulong entryHash = Hashing.ComputeNameHash(entryName);
-            if (state.TryResolve(tableHash, entryHash, out CompiledTable table, out int index))
+            if (state.TryResolve(tableHash, entryHash, out CompiledTable table, out int index, out _))
             {
+                ReportIfMessage(table, index, tableName, entryName);
                 return table.GetString(index);
             }
             return GetMissingMarker(state, tableName, entryName, tableHash, entryHash);
@@ -205,7 +265,7 @@ namespace reromanlee.ReactiveLocalizer
         public bool TryGet(in EntryKey key, out string text)
         {
             LocalizerState state = Volatile.Read(ref _state);
-            if (state.IsInitialized && !key.IsEmpty && state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index))
+            if (state.IsInitialized && !key.IsEmpty && state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out _))
             {
                 text = table.GetString(index);
                 return true;
@@ -218,8 +278,9 @@ namespace reromanlee.ReactiveLocalizer
         public ReadOnlyMemory<char> GetMemory(in EntryKey key)
         {
             LocalizerState state = Volatile.Read(ref _state);
-            if (state.IsInitialized && !key.IsEmpty && state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index))
+            if (state.IsInitialized && !key.IsEmpty && state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out _))
             {
+                ReportIfMessage(table, index, key.Table.Name, key.Name);
                 return table.GetMemory(index);
             }
             return Get(in key).AsMemory();
@@ -244,16 +305,88 @@ namespace reromanlee.ReactiveLocalizer
                 return default;
             }
             _bindings.Add(in key, target, apply, BindingInvokers<TTarget>.Invoker, out int index, out int generation);
+            ApplyBinding(index, generation);
+            return new TextBinding(_bindings, index, generation);
+        }
+
+        /// <inheritdoc/>
+        public TextBinding Bind<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, string> apply) where TTarget : class
+        {
+            if (target == null)
+            {
+                throw new ArgumentNullException(nameof(target));
+            }
+            if (apply == null)
+            {
+                throw new ArgumentNullException(nameof(apply));
+            }
+            if (IsDisposed)
+            {
+                ReportDisposedUse();
+                return default;
+            }
+            _bindings.Add(in message, target, apply, BindingInvokers<TTarget>.Invoker, out int index, out int generation);
+            ApplyBinding(index, generation);
+            return new TextBinding(_bindings, index, generation);
+        }
+
+        /// <summary>
+        /// Registers <paramref name="formatter"/> for arguments of <paramref name="type"/>, such as <c>date</c> in
+        /// <c>{deadline, date}</c>, replacing any formatter registered for it before; null removes it. Types ignore case.
+        /// </summary>
+        /// <remarks>
+        /// Safe from any thread; messages formatted afterwards use it. Bound text formatted before keeps its text until
+        /// it is formatted again, so register formatters before binding, as part of setting the localizer up.
+        /// </remarks>
+        /// <exception cref="ArgumentException">
+        /// <paramref name="type"/> breaks the naming rule, or is a type messages already define, such as <c>number</c>.
+        /// </exception>
+        public void SetFormatter(string type, ArgumentFormatter formatter)
+        {
+            NameRules.ThrowIfInvalid(type, nameof(type));
+            if (FormatterTable.IsBuiltInType(type))
+            {
+                throw new ArgumentException($"'{type}' is a type messages already define; formatters are for types such as date.", nameof(type));
+            }
+            lock (_lockObject)
+            {
+                Volatile.Write(ref _formatters, Volatile.Read(ref _formatters).With(type, formatter));
+            }
+        }
+
+        /// <summary>Applies a new binding's first text: right away on the host thread, else at the host's next update.</summary>
+        private void ApplyBinding(int index, int generation)
+        {
             if (_host.IsHostThread)
             {
                 _bindings.Apply(index, generation);
+                return;
             }
-            else
-            {
-                _hostActions.Enqueue(() => _bindings.Apply(index, generation));
-                RequestUpdate();
-            }
-            return new TextBinding(_bindings, index, generation);
+            ApplyBindingLater(index, generation);
+        }
+
+        // A method of its own, because a lambda in ApplyBinding would make every binding allocate its closure.
+        private void ApplyBindingLater(int index, int generation)
+        {
+            _hostActions.Enqueue(() => _bindings.Apply(index, generation));
+            RequestUpdate();
+        }
+
+        /// <summary>Whether the calling thread is the host's, where bindings may be changed right away.</summary>
+        internal bool IsOnHostThread => _host.IsHostThread;
+
+        /// <summary>Queues <paramref name="action"/> for the host thread's next update.</summary>
+        internal void RunOnHostLater(Action action)
+        {
+            _hostActions.Enqueue(action);
+            RequestUpdate();
+        }
+
+        /// <summary>Returns the text a message binding shows right now. Host thread only.</summary>
+        internal string ResolveBindingText(in EntryMessage message)
+        {
+            LocalizerState state = Volatile.Read(ref _state);
+            return state.IsInitialized ? Format(state, in message, false) : string.Empty;
         }
 
         /// <summary>Returns the text a binding of <paramref name="key"/> shows right now. Host thread only.</summary>
@@ -269,8 +402,9 @@ namespace reromanlee.ReactiveLocalizer
                 ReportEmptyKey();
                 return string.Empty;
             }
-            if (state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index))
+            if (state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out _))
             {
+                ReportIfMessage(table, index, key.Table.Name, key.Name);
                 return table.GetString(index);
             }
             return GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
@@ -582,7 +716,12 @@ namespace reromanlee.ReactiveLocalizer
 
             // The one step every lookup observes. Tables of languages the new chain doesn't use are released with the
             // old dictionary.
-            LocalizerState state = new(_state.Version + 1, languageSwitch.Target, chain, stateTables);
+            LanguageFormat[] formats = new LanguageFormat[chain.Count];
+            for (int l = 0; l < chain.Count; l++)
+            {
+                formats[l] = _catalog.GetFormat(chain[l]);
+            }
+            LocalizerState state = new(_state.Version + 1, languageSwitch.Target, chain, formats, stateTables);
             Volatile.Write(ref _state, state);
             _loadedTables = languageSwitch.Loaded;
             _pendingSwitch = null;
@@ -687,6 +826,117 @@ namespace reromanlee.ReactiveLocalizer
                     Report(ReportSeverity.Error, $"A language change handler threw: {exception}");
                 }
             }
+        }
+
+        // Messages.
+
+        /// <summary>Returns the text of a message: formatted when its entry has arguments, plain text when it has none.</summary>
+        private string Format(LocalizerState state, in EntryMessage message, bool isReportingEmptyKey)
+        {
+            EntryKey key = message.Key;
+            if (key.IsEmpty)
+            {
+                if (isReportingEmptyKey)
+                {
+                    ReportEmptyKey();
+                }
+                return string.Empty;
+            }
+            if (!state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out int languageIndex))
+            {
+                return GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
+            }
+            if (!table.TryGetMessage(index, out int start))
+            {
+                return table.GetString(index);
+            }
+            Span<char> buffer = stackalloc char[256];
+            TextBuilder output = new(buffer);
+            try
+            {
+                Render(state, table, start, languageIndex, in message, ref output);
+                return output.ToString();
+            }
+            finally
+            {
+                output.Dispose();
+            }
+        }
+
+        private void Render(LocalizerState state, CompiledTable table, int start, int languageIndex, in EntryMessage message, ref TextBuilder output)
+        {
+            MessageProblems problems = default;
+            try
+            {
+                MessageRenderer.Render(table.Program, table.Characters, start, in message, state.Formats[languageIndex],
+                    Volatile.Read(ref _formatters), state.Chain[languageIndex], ref output, ref problems);
+            }
+            catch (Exception exception)
+            {
+                // A verified table can't make rendering fail; this only guards against a bug turning into a crash.
+                if (_reportedProblems.TryAdd(message.Key.Table.Hash, message.Key.Hash, 0))
+                {
+                    Report(ReportSeverity.Error, $"Formatting the message of '{message.Key}' failed: {exception}");
+                }
+            }
+            if (problems.HasAny)
+            {
+                ReportMessageProblems(table, start, in message, in problems);
+            }
+        }
+
+        /// <summary>Reports each problem of a formatted message once: arguments missing, of the wrong kind, or without a working formatter.</summary>
+        private void ReportMessageProblems(CompiledTable table, int start, in EntryMessage message, in MessageProblems problems)
+        {
+            EntryKey key = message.Key;
+            int count = MessageProgram.GetArgumentCount(table.Program, start);
+            for (int argument = 0; argument < count; argument++)
+            {
+                uint bit = 1u << argument;
+                int entry = MessageProgram.GetArgumentEntry(start, argument);
+                ulong nameHash = MessageProgram.ReadUInt64(table.Program, entry);
+                string name = MessageRenderer.GetArgumentName(table.Program, table.Characters, start, argument).ToString();
+                if ((problems.MissingArguments & bit) != 0 && _reportedProblems.TryAdd(key.Table.Hash, key.Hash, nameHash ^ 1))
+                {
+                    Report(ReportSeverity.Error, $"The message of '{key}' was formatted without its argument {{{name}}}, so it shows as {{{name}}}. Each problem is reported once.");
+                }
+                if ((problems.MistypedArguments & bit) != 0 && _reportedProblems.TryAdd(key.Table.Hash, key.Hash, nameHash ^ 2))
+                {
+                    Report(ReportSeverity.Error, $"The message of '{key}' was given a value of the wrong kind for {{{name}}}, such as text where it needs a number, so it shows the value as it is or its 'other' form. Each problem is reported once.");
+                }
+                if ((problems.UnformattedArguments & bit) != 0 && _reportedProblems.TryAdd(key.Table.Hash, key.Hash, nameHash ^ 3))
+                {
+                    string type = new(table.Characters, problems.UnformattedTypeStart, problems.UnformattedTypeLength);
+                    Report(ReportSeverity.Error, $"The message of '{key}' formats {{{name}}} as '{type}', but no formatter is registered for it, so it shows the value as it is. Register one with SetFormatter(\"{type}\", ...). Each problem is reported once.");
+                }
+                if ((problems.FailedArguments & bit) != 0 && _reportedProblems.TryAdd(key.Table.Hash, key.Hash, nameHash ^ 4))
+                {
+                    string reason = problems.FormatterException != null ? $" It threw: {problems.FormatterException}" : " It kept asking for more room.";
+                    Report(ReportSeverity.Error, $"The formatter of {{{name}}} in the message of '{key}' failed, so it shows as {{{name}}}.{reason}");
+                }
+            }
+        }
+
+        /// <summary>Reports, once per entry, that a message with arguments was read as plain text, where its arguments show as {name}.</summary>
+        private void ReportIfMessage(CompiledTable table, int index, ReadOnlySpan<char> tableName, ReadOnlySpan<char> entryName)
+        {
+            if (!table.TryGetMessage(index, out _) || !_reportedProblems.TryAdd(table.TableHash, Hashing.ComputeNameHash(entryName), 5))
+            {
+                return;
+            }
+            Report(ReportSeverity.Warning, $"'{tableName.ToString()}.{entryName.ToString()}' takes arguments, so reading it as plain text shows them as {{name}}. Read it as a message, such as {CatalogKey.Name}Keys.{tableName.ToString()}.{entryName.ToString()}(...).");
+        }
+
+        private static bool TryCopy(ReadOnlySpan<char> text, Span<char> destination, out int written)
+        {
+            if (text.Length > destination.Length)
+            {
+                written = 0;
+                return false;
+            }
+            text.CopyTo(destination);
+            written = text.Length;
+            return true;
         }
 
         // Reports.

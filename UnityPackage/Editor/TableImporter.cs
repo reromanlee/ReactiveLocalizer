@@ -11,11 +11,16 @@ namespace reromanlee.ReactiveLocalizer.Editor
     /// Imports a <c>Shop.English.lang</c> file as a <see cref="TableAsset"/>: the table compiled for the catalog that
     /// owns its folder, with every problem reported at its line.
     /// </summary>
+    /// <remarks>
+    /// An import depends on its catalog, whose cultures decide the plural forms each message needs, and a translation
+    /// also on its table's source-language file, whose messages it is checked against. Changing either imports the
+    /// file again, so a translation is never left checked against an outdated source.
+    /// </remarks>
     [ScriptedImporter(Version, LocalizationFiles.TableExtension)]
     internal sealed class TableImporter : ScriptedImporter
     {
         /// <summary>Raised whenever the import's output changes, so every table file is imported again.</summary>
-        public const int Version = 1;
+        public const int Version = 2;
 
         public override void OnImportAsset(AssetImportContext context)
         {
@@ -40,9 +45,32 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 return;
             }
 
+            context.DependsOnSourceAsset(catalogPath);
             TableDocument document = TableDocument.Parse(LocalizationFiles.ReadAllText(path));
             List<DocumentIssue> issues = new(document.Issues);
-            byte[] data = TableCompiler.Compile(new CatalogKey(catalogName), new TableKey(tableName), new LanguageKey(languageName), document, issues);
+            TableKey table = new(tableName);
+            LanguageKey language = new(languageName);
+            // The catalog's own import reports why it's unusable; its tables still compile, with their syntax checked.
+            CatalogInfo catalog = CatalogInfo.FromDocument(new CatalogKey(catalogName), CatalogDocument.Parse(LocalizationFiles.ReadAllText(catalogPath)), null, null);
+            byte[] data;
+            if (catalog == null)
+            {
+                data = TableCompiler.Compile(new CatalogKey(catalogName), table, language, document, issues);
+            }
+            else
+            {
+                TableDocument source = null;
+                if (language != catalog.SourceLanguage.Key)
+                {
+                    string sourcePath = CatalogLayout.FindTableFile(catalogPath, tableName, catalog.SourceLanguage.Name);
+                    if (sourcePath != null)
+                    {
+                        context.DependsOnSourceAsset(sourcePath);
+                        source = TableDocument.Parse(LocalizationFiles.ReadAllText(sourcePath));
+                    }
+                }
+                data = TableCompiler.Compile(catalog, table, language, document, source, issues);
+            }
             ImportReports.Report(context, issues);
             asset.Initialize(catalogName, tableName, languageName, data);
         }

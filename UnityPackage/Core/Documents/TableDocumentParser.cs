@@ -187,10 +187,13 @@ namespace reromanlee.ReactiveLocalizer.Documents
             // The value is trimmed of blanks at both ends before its escapes are resolved, so escaped spaces survive.
             int valueStart = DocumentSyntax.SkipBlanks(line, position + 1);
             int valueEnd = DocumentSyntax.TrimEnd(line, valueStart);
-            string value = TextEscaping.Unescape(line.Slice(valueStart, valueEnd - valueStart), lineNumber, valueStart + 1, _issues, _valueBuilder);
+            ReadOnlySpan<char> written = line.Slice(valueStart, valueEnd - valueStart);
+            string value = TextEscaping.Unescape(written, lineNumber, valueStart + 1, _issues, _valueBuilder);
+            // The written form is only kept when escapes make it differ, which is all column lookups need.
+            string writtenValue = written.IndexOf('\\') >= 0 ? written.ToString() : null;
 
             _entries.Add(new TableDocumentEntry(key.ToString(), value, hasFingerprint, fingerprint,
-                TakePendingComments(), TakePendingAttributes(), lineNumber));
+                TakePendingComments(), TakePendingAttributes(), lineNumber, valueStart + 1, writtenValue));
             _firstLines.Add(hash, lineNumber);
             _hasContent = true;
         }

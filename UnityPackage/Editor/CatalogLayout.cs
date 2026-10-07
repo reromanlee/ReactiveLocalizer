@@ -25,6 +25,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
         public const string DependencyName = "reromanlee.ReactiveLocalizer/CatalogLayout";
 
         private static string[] _catalogPaths;
+        private static Dictionary<string, List<string>> _tableFiles;
+        private static bool _hasRescannedTableFiles;
 
         /// <summary>Every catalog file in Assets and the packages, as asset paths, sorted.</summary>
         public static IReadOnlyList<string> CatalogPaths => _catalogPaths ??= Scan();
@@ -68,6 +70,34 @@ namespace reromanlee.ReactiveLocalizer.Editor
         {
             _catalogPaths = Scan();
             RegisterDependency();
+        }
+
+        /// <summary>
+        /// Returns the asset path of the table file named <paramref name="tableName"/> in <paramref name="languageName"/>
+        /// that <paramref name="catalogPath"/> owns, wherever in the catalog's folders it is, or null when there is none.
+        /// </summary>
+        /// <remarks>
+        /// The table files are scanned once and remembered until <see cref="ForgetTableFiles"/>. A file not found is
+        /// looked for once more after a fresh scan, because it may have arrived in the import that's asking.
+        /// </remarks>
+        public static string FindTableFile(string catalogPath, string tableName, string languageName)
+        {
+            string fileName = $"{tableName}.{languageName}.{LocalizationFiles.TableExtension}";
+            string found = FindTableFileIn(_tableFiles ??= ScanTableFiles(), fileName, catalogPath);
+            if (found == null && !_hasRescannedTableFiles)
+            {
+                _hasRescannedTableFiles = true;
+                _tableFiles = ScanTableFiles();
+                found = FindTableFileIn(_tableFiles, fileName, catalogPath);
+            }
+            return found;
+        }
+
+        /// <summary>Forgets the scanned table files, once a batch of imports changed them.</summary>
+        public static void ForgetTableFiles()
+        {
+            _tableFiles = null;
+            _hasRescannedTableFiles = false;
         }
 
         /// <summary>Returns the asset path of the catalog that owns the file at <paramref name="assetPath"/>, or null.</summary>
@@ -154,14 +184,57 @@ namespace reromanlee.ReactiveLocalizer.Editor
             return paths.ToArray();
         }
 
-        private static void ScanFolder(string assetRoot, string fullRoot, List<string> paths)
+        private static string FindTableFileIn(Dictionary<string, List<string>> tableFiles, string fileName, string catalogPath)
+        {
+            if (!tableFiles.TryGetValue(fileName, out List<string> candidates))
+            {
+                return null;
+            }
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (LocalizationFiles.Exists(candidates[i]) && FindOwner(candidates[i]) == catalogPath)
+                {
+                    return candidates[i];
+                }
+            }
+            return null;
+        }
+
+        private static Dictionary<string, List<string>> ScanTableFiles()
+        {
+            List<string> paths = new();
+            ScanFolder("Assets", Path.GetFullPath("Assets"), paths, LocalizationFiles.TableExtension);
+            foreach (PackageInfo package in PackageInfo.GetAllRegisteredPackages())
+            {
+                if (package.source == UnityEditor.PackageManager.PackageSource.BuiltIn ||
+                    package.name.StartsWith("com.unity.", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                ScanFolder(package.assetPath, package.resolvedPath, paths, LocalizationFiles.TableExtension);
+            }
+            Dictionary<string, List<string>> byName = new(StringComparer.OrdinalIgnoreCase);
+            foreach (string path in paths)
+            {
+                string fileName = path.Substring(path.LastIndexOf('/') + 1);
+                if (!byName.TryGetValue(fileName, out List<string> sameName))
+                {
+                    sameName = new List<string>();
+                    byName.Add(fileName, sameName);
+                }
+                sameName.Add(path);
+            }
+            return byName;
+        }
+
+        private static void ScanFolder(string assetRoot, string fullRoot, List<string> paths, string extension = LocalizationFiles.CatalogExtension)
         {
             if (string.IsNullOrEmpty(fullRoot) || !Directory.Exists(fullRoot))
             {
                 return;
             }
             string normalizedRoot = fullRoot.Replace('\\', '/').TrimEnd('/');
-            foreach (string file in Directory.EnumerateFiles(fullRoot, "*." + LocalizationFiles.CatalogExtension, SearchOption.AllDirectories))
+            foreach (string file in Directory.EnumerateFiles(fullRoot, "*." + extension, SearchOption.AllDirectories))
             {
                 string relative = file.Replace('\\', '/').Substring(normalizedRoot.Length);
                 if (!IsIgnoredByUnity(relative))

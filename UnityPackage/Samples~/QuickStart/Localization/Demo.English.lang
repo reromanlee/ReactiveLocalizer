@@ -1,3 +1,9 @@
+# The button that adds a coin to the counter above it.
+AddCoin = Add a coin
+
+# How many coins the player has, counting up as the button is pressed.
+Coins = You have {coins, plural, =0 {no coins} one {# coin} other {# coins}}.
+
 # Greets whoever opened the sample.
 Greeting = Hello! Pick a language on the left, and every text here follows at once.
 

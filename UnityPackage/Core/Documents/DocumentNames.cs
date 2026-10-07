@@ -52,10 +52,19 @@ namespace reromanlee.ReactiveLocalizer.Documents
         /// <summary><c>true</c> when builds fail while an entry is missing in the language.</summary>
         public const string Required = "Required";
 
+        /// <summary>The digits zero to nine the language writes numbers with, replacing its culture's.</summary>
+        public const string Digits = "Digits";
+
+        /// <summary>The decimal separator of the language, replacing its culture's.</summary>
+        public const string DecimalSeparator = "DecimalSeparator";
+
+        /// <summary>The digit group separator of the language, replacing its culture's; empty never groups.</summary>
+        public const string GroupSeparator = "GroupSeparator";
+
         private static readonly string[] EntryAttributes = { Formerly, MaximumLength };
         private static readonly string[] TableSettings = { Loading, Delivery, GenerateCode };
         private static readonly string[] CatalogAttributes = { Source, Namespace };
-        private static readonly string[] LanguageFields = { DisplayName, Culture, Fallback, Direction, Required };
+        private static readonly string[] LanguageFields = { DisplayName, Culture, Fallback, Direction, Required, Digits, DecimalSeparator, GroupSeparator };
 
         /// <summary>Returns the canonical spelling of a known entry attribute, or null for an unknown one.</summary>
         internal static string FindEntryAttribute(ReadOnlySpan<char> name) => Find(EntryAttributes, name);

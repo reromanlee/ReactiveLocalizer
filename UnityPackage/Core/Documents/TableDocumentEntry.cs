@@ -7,8 +7,17 @@ namespace reromanlee.ReactiveLocalizer.Documents
     public sealed class TableDocumentEntry
     {
         /// <summary>Creates an entry read from a 1-based <paramref name="line"/>.</summary>
+        /// <param name="key">The entry's key.</param>
+        /// <param name="value">The entry's text, with its escapes resolved.</param>
+        /// <param name="hasFingerprint">Whether the line carries a fingerprint tag.</param>
+        /// <param name="fingerprint">The fingerprint, when it has one.</param>
+        /// <param name="comments">The comments above the entry.</param>
+        /// <param name="attributes">The attributes above the entry.</param>
+        /// <param name="line">The line the entry was read from.</param>
+        /// <param name="valueColumn">The 1-based column the value starts at; 0 when unknown.</param>
+        /// <param name="writtenValue">The value as written, when its escapes make it differ from <paramref name="value"/>.</param>
         public TableDocumentEntry(string key, string value, bool hasFingerprint, uint fingerprint,
-            IReadOnlyList<string> comments, IReadOnlyList<DocumentProperty> attributes, int line)
+            IReadOnlyList<string> comments, IReadOnlyList<DocumentProperty> attributes, int line, int valueColumn = 0, string writtenValue = null)
         {
             Key = key;
             Value = value ?? string.Empty;
@@ -17,6 +26,8 @@ namespace reromanlee.ReactiveLocalizer.Documents
             Comments = comments ?? Array.Empty<string>();
             Attributes = attributes ?? Array.Empty<DocumentProperty>();
             Line = line;
+            ValueColumn = valueColumn;
+            WrittenValue = writtenValue ?? Value;
         }
 
         /// <summary>The entry's key, as written.</summary>
@@ -45,6 +56,18 @@ namespace reromanlee.ReactiveLocalizer.Documents
 
         /// <summary>Line the entry was read from, counted from 1.</summary>
         public int Line { get; }
+
+        /// <summary>Column the value starts at, counted from 1; 0 when the entry wasn't read from a file.</summary>
+        public int ValueColumn { get; }
+
+        /// <summary>The value as the file writes it, escapes included.</summary>
+        public string WrittenValue { get; }
+
+        /// <summary>
+        /// Returns the 1-based column of the character at <paramref name="valueIndex"/> of <see cref="Value"/>,
+        /// counting the escapes written before it, so problems inside a value point at the right place.
+        /// </summary>
+        public int GetColumn(int valueIndex) => Math.Max(ValueColumn, 1) + TextEscaping.FindWrittenOffset(WrittenValue.AsSpan(), Math.Max(valueIndex, 0));
 
         /// <summary>Returns the value of the first attribute named <paramref name="name"/>, ignoring case.</summary>
         public bool TryGetAttribute(string name, out string value)

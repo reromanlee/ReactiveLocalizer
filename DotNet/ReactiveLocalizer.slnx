@@ -3,6 +3,9 @@
     <Project Path="Core/Core.csproj" />
     <Project Path="Authoring/Authoring.csproj" />
   </Folder>
+  <Folder Name="/Tools/">
+    <Project Path="CldrGenerator/CldrGenerator.csproj" />
+  </Folder>
   <Folder Name="/Tests/">
     <Project Path="Tests.Core/Tests.Core.csproj" />
     <Project Path="Tests.Authoring/Tests.Authoring.csproj" />

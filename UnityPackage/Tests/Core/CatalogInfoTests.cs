@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using reromanlee.ReactiveLocalizer.Documents;
+using reromanlee.ReactiveLocalizer.Formatting;
 using reromanlee.ReactiveLocalizer.Tables;
 using System;
 using System.Collections.Generic;
@@ -21,7 +22,7 @@ namespace reromanlee.ReactiveLocalizer.Tests
             "[English]\nCulture = en\n" +
             "[Russian]\nDisplayName = Russkiy\nCulture = ru\nRequired = true\n" +
             "[Pirate]\nDisplayName = Pirate Speak\nFallback = English\n" +
-            "[Arabic]\nCulture = ar\nDirection = RightToLeft\n";
+            "[Arabic]\nCulture = ar\nDirection = RightToLeft\nDigits = 0123456789\nGroupSeparator =\n";
 
         [Test]
         public void FromDocument_ReadsEveryLanguageField()
@@ -137,9 +138,66 @@ namespace reromanlee.ReactiveLocalizer.Tests
                 Assert.That(actual.Fallback, Is.EqualTo(expected.Fallback));
                 Assert.That(actual.Direction, Is.EqualTo(expected.Direction));
                 Assert.That(actual.IsRequired, Is.EqualTo(expected.IsRequired));
+                Assert.That(actual.Digits, Is.EqualTo(expected.Digits));
+                Assert.That(actual.DecimalSeparator, Is.EqualTo(expected.DecimalSeparator));
+                Assert.That(actual.GroupSeparator, Is.EqualTo(expected.GroupSeparator));
             }
+            Assert.That(read.Languages[3].Digits, Is.EqualTo("0123456789"));
+            Assert.That(read.Languages[3].GroupSeparator, Is.Empty);
+            Assert.That(read.Languages[0].GroupSeparator, Is.Null);
             Assert.That(read.Tables.Count, Is.EqualTo(2));
             Assert.That(read.Tables[1].Delivery, Is.EqualTo(TableDelivery.Streaming));
+        }
+
+        [Test]
+        public void GetFormat_ComesFromTheCultureThenTheFallbackThenTheRoot()
+        {
+            CatalogInfo catalog = CatalogInfo.FromDocument(Catalog, CatalogDocument.Parse(Document + "[Klingon]\n"), Tables, null);
+            LanguageFormat english = FormatOf(catalog, "English");
+            LanguageFormat russian = FormatOf(catalog, "Russian");
+
+            Assert.That(PluralRules.TryFindCardinal("ru", out int russianRules), Is.True);
+            Assert.That(russian.CardinalRules, Is.EqualTo(russianRules));
+            Assert.That(russian.Numbers.DecimalSeparator, Is.EqualTo(","));
+            Assert.That(FormatOf(catalog, "Pirate"), Is.SameAs(english));
+            Assert.That(FormatOf(catalog, "Klingon"), Is.SameAs(LanguageFormat.Root));
+        }
+
+        [Test]
+        public void GetFormat_AppliesTheLanguagesOwnNumberSymbols()
+        {
+            CatalogInfo catalog = CatalogInfo.FromDocument(Catalog, CatalogDocument.Parse(Document), Tables, null);
+            LanguageFormat arabic = FormatOf(catalog, "Arabic");
+
+            Assert.That(PluralRules.TryFindCardinal("ar", out int arabicRules), Is.True);
+            Assert.That(arabic.CardinalRules, Is.EqualTo(arabicRules));
+            Assert.That(arabic.Numbers.Digits, Is.EqualTo("0123456789"));
+            Assert.That(arabic.Numbers.GroupSeparator, Is.Empty);
+        }
+
+        [Test]
+        public void FromDocument_InheritsTheFallbackForCulturesCldrDoesntKnow()
+        {
+            List<DocumentIssue> issues = new();
+            CatalogInfo catalog = CatalogInfo.FromDocument(Catalog, CatalogDocument.Parse(
+                "@source English\n[English]\nCulture = en\n[Elvish]\nCulture = qya\nFallback = English\n"), Tables, issues);
+
+            Assert.That(issues.Count, Is.EqualTo(1));
+            Assert.That(issues[0].Severity, Is.EqualTo(IssueSeverity.Warning));
+            Assert.That(issues[0].Message, Does.Contain("qya"));
+            Assert.That(FormatOf(catalog, "Elvish"), Is.SameAs(FormatOf(catalog, "English")));
+        }
+
+        [Test]
+        public void FromDocument_ReportsDigitsThatArentTen()
+        {
+            List<DocumentIssue> issues = new();
+            CatalogInfo catalog = CatalogInfo.FromDocument(Catalog, CatalogDocument.Parse(
+                "@source English\n[English]\nDigits = 0123\nDecimalSeparator =\n"), Tables, issues);
+
+            Assert.That(issues.Count, Is.EqualTo(2));
+            Assert.That(catalog.SourceLanguage.Digits, Is.Null);
+            Assert.That(catalog.SourceLanguage.DecimalSeparator, Is.Null);
         }
 
         [Test]
@@ -150,6 +208,12 @@ namespace reromanlee.ReactiveLocalizer.Tests
             {
                 Assert.That(CompiledCatalog.TryRead(data.AsSpan(0, length), out _, out _), Is.False, $"Read {length} of {data.Length} bytes.");
             }
+        }
+
+        private static LanguageFormat FormatOf(CatalogInfo catalog, string language)
+        {
+            Assert.That(catalog.TryGetLanguage(new LanguageKey(language), out LanguageInfo info), Is.True, language);
+            return catalog.GetFormat(info);
         }
     }
 }

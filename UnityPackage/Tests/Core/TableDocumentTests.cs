@@ -264,5 +264,19 @@ namespace reromanlee.ReactiveLocalizer.Tests
             Assert.That(entry.Value, Is.EqualTo("Buy"));
             Assert.That(document.TryGetEntry("Missing", out _), Is.False);
         }
+
+        [TestCase(0, 10)]
+        [TestCase(4, 14)]
+        [TestCase(5, 16)]
+        [TestCase(6, 22)]
+        [TestCase(8, 24)]
+        public void GetColumn_CountsTheEscapesWrittenBeforeACharacter(int valueIndex, int expectedColumn)
+        {
+            // The value is "Line", a line break, a no-break space, "a", a backslash kept from an unknown escape, "q!".
+            TableDocumentEntry entry = TableDocument.Parse("Broken = Line\\n\\u00A0a\\q!").Entries[0];
+
+            Assert.That(entry.ValueColumn, Is.EqualTo(10));
+            Assert.That(entry.GetColumn(valueIndex), Is.EqualTo(expectedColumn));
+        }
     }
 }

@@ -71,8 +71,30 @@ namespace reromanlee.ReactiveLocalizer
         /// <remarks>
         /// Returns the same string instance on every call, so reading text allocates nothing. A key that exists
         /// nowhere returns <c>[Table.Key]</c> and is reported once. Before initialization, returns an empty string.
+        /// An entry with arguments read this way shows them as <c>{name}</c>; read it as a message instead.
         /// </remarks>
         string Get(in EntryKey key);
+
+        /// <summary>
+        /// Returns the text of a message, such as <c>LocalizationKeys.Shop.CoinBalance(coins: 5)</c>, formatted in the
+        /// language it is found in: its plural forms, its digits and its separators.
+        /// </summary>
+        /// <remarks>
+        /// Allocates the returned string; to format without allocating, use <see cref="TryFormat"/> or a binding. A
+        /// missing argument shows as <c>{name}</c> and is reported once. Behaves like <see cref="Get(in EntryKey)"/>
+        /// otherwise, and an entry without arguments returns its text, ignoring the arguments.
+        /// </remarks>
+        string Get(in EntryMessage message);
+
+        /// <summary>
+        /// Writes the text of a message into <paramref name="destination"/> without allocating, for consumers that
+        /// accept characters, such as TextMeshPro.
+        /// </summary>
+        /// <returns>
+        /// False when <paramref name="destination"/> is too small, with nothing written; call it again with a larger one.
+        /// </returns>
+        /// <remarks>Behaves like <see cref="Get(in EntryMessage)"/> otherwise.</remarks>
+        bool TryFormat(in EntryMessage message, Span<char> destination, out int written);
 
         /// <summary>
         /// Returns the text of an entry named by data, such as dialogue lines a script refers to by name. Hashes the
@@ -107,5 +129,13 @@ namespace reromanlee.ReactiveLocalizer
         /// </remarks>
         /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="apply"/> is null.</exception>
         TextBinding Bind<TTarget>(in EntryKey key, TTarget target, Action<TTarget, string> apply) where TTarget : class;
+
+        /// <summary>
+        /// Calls <paramref name="apply"/> with the text of <paramref name="message"/> right away, and again every time it
+        /// changes, until the returned binding is disposed. <see cref="TextBinding.SetMessage"/> changes its arguments.
+        /// </summary>
+        /// <remarks>Behaves like the binding of a key otherwise; formatting allocates only the string the callback receives.</remarks>
+        /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="apply"/> is null.</exception>
+        TextBinding Bind<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, string> apply) where TTarget : class;
     }
 }

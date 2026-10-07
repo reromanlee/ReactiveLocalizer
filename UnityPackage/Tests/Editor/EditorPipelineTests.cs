@@ -19,7 +19,12 @@ namespace reromanlee.ReactiveLocalizer.Tests
     {
         private const string Folder = "Assets/ReactiveLocalizerTests";
 
+        private const string EnglishBalance = "Balance = You have {coins, plural, one {# coin} other {# coins}}.\n";
+        private const string RussianBalance = "Balance = \u0423 \u0432\u0430\u0441 {coins, plural, one {# \u043C\u043E\u043D\u0435\u0442\u0430} few {# \u043C\u043E\u043D\u0435\u0442\u044B} many {# \u043C\u043E\u043D\u0435\u0442} other {# \u043C\u043E\u043D\u0435\u0442\u044B}}.\n";
+
         private static readonly EntryKey Purchase = new("Shop", "Purchase");
+
+        private static EntryMessage BalanceOf(int coins) => new(new EntryKey("Shop", "Balance"), new MessageArgument("coins", coins));
 
         [SetUp]
         public void CreateFiles()
@@ -27,8 +32,8 @@ namespace reromanlee.ReactiveLocalizer.Tests
             KeysGenerator.IsSuspended = true;
             Directory.CreateDirectory($"{Folder}/Feature");
             File.WriteAllText($"{Folder}/Game.catalog", "@source English\n\n[English]\nCulture = en\n\n[Russian]\nCulture = ru\n");
-            File.WriteAllText($"{Folder}/Shop.English.lang", "# Buys the selected item.\n@formerly BuyButton\nPurchase = Buy\nTitle = Shop\n");
-            File.WriteAllText($"{Folder}/Shop.Russian.lang", "Purchase = Kupit\n");
+            File.WriteAllText($"{Folder}/Shop.English.lang", "# Buys the selected item.\n@formerly BuyButton\nPurchase = Buy\nTitle = Shop\n" + EnglishBalance);
+            File.WriteAllText($"{Folder}/Shop.Russian.lang", "Purchase = Kupit\n" + RussianBalance);
             File.WriteAllText($"{Folder}/Feature/Inventory.English.lang", "@loading OnDemand\n\nSword = Sword\n");
             // The layout is scanned before importing, so the tables find their catalog in this very import.
             CatalogLayout.Refresh();
@@ -87,17 +92,60 @@ namespace reromanlee.ReactiveLocalizer.Tests
         [Test]
         public void KeysScript_HoldsTheSourceKeysAndAliases()
         {
-            KeysScript script = CatalogIndex.Find(new CatalogKey("Game")).CreateKeysScript();
+            KeysScript script = CatalogIndex.Find(new CatalogKey("Game")).CreateKeysScript(out string brokenMessage);
             List<string> problems = new();
 
             string source = KeysScriptWriter.Write(script, problems);
 
             Assert.That(problems, Is.Empty);
+            Assert.That(brokenMessage, Is.Null);
+            Assert.That(source, Does.Contain("EntryMessage Balance(global::reromanlee.ReactiveLocalizer.MessageNumber coins)"));
             Assert.That(source, Does.Contain("public static class GameKeys"));
             Assert.That(source, Does.Contain("EntryKey Purchase = new(TableKey, \"Purchase\");"));
             Assert.That(source, Does.Contain("EntryKey BuyButton = Purchase;"));
             Assert.That(source, Does.Contain("EntryKey Sword = new(TableKey, \"Sword\");"));
             Assert.That(source, Does.Contain("LanguageKey Russian = new(\"Russian\");"));
+        }
+
+        [Test]
+        public void Localizer_InTheEditor_FormatsMessagesOfTheImportedFiles()
+        {
+            using Localizer localizer = new(new CatalogKey("Game"), new UnityHost());
+            localizer.InitializeAsync();
+
+            Assert.That(localizer.Get(BalanceOf(21)), Is.EqualTo("You have 21 coins."));
+            localizer.SetLanguageAsync(new LanguageKey("Russian"));
+            Assert.That(localizer.Get(BalanceOf(21)), Is.EqualTo("\u0423 \u0432\u0430\u0441 21 \u043C\u043E\u043D\u0435\u0442\u0430."));
+        }
+
+        [Test]
+        public void Translation_WithOtherArguments_IsLeftOutUntilItMatches()
+        {
+            LogAssert.Expect(LogType.Error, new Regex(@"Shop\.Russian\.lang\(2,12\): error: \{money\} isn't an argument of the source text"));
+            LogAssert.Expect(LogType.Error, new Regex(@"Shop\.Russian\.lang\(2,11\): error: The translation leaves out \{coins\}"));
+            File.WriteAllText($"{Folder}/Shop.Russian.lang", "Purchase = Kupit\nBalance = {money} \u043C\u043E\u043D\u0435\u0442\n");
+            AssetDatabase.ImportAsset($"{Folder}/Shop.Russian.lang", ImportAssetOptions.ForceSynchronousImport);
+
+            using Localizer localizer = new(new CatalogKey("Game"), new UnityHost());
+            localizer.SetLanguageAsync(new LanguageKey("Russian"));
+            localizer.InitializeAsync();
+            Assert.That(localizer.Get(BalanceOf(2)), Is.EqualTo("You have 2 coins."));
+            Assert.That(localizer.Get(Purchase), Is.EqualTo("Kupit"));
+        }
+
+        [Test]
+        public void Translation_IsCheckedAgainWhenItsSourceChanges()
+        {
+            LogAssert.Expect(LogType.Error, new Regex(@"Shop\.Russian\.lang\(2,.*\{coins\} isn't an argument of the source text"));
+            LogAssert.Expect(LogType.Error, new Regex(@"Shop\.Russian\.lang\(2,.*leaves out \{money\}"));
+            File.WriteAllText($"{Folder}/Shop.English.lang", "Purchase = Buy\nBalance = You have {money, plural, one {# coin} other {# coins}}.\n");
+            AssetDatabase.ImportAsset($"{Folder}/Shop.English.lang", ImportAssetOptions.ForceSynchronousImport);
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+
+            using Localizer localizer = new(new CatalogKey("Game"), new UnityHost());
+            localizer.SetLanguageAsync(new LanguageKey("Russian"));
+            localizer.InitializeAsync();
+            Assert.That(localizer.Get(new EntryMessage(new EntryKey("Shop", "Balance"), new MessageArgument("money", 5))), Is.EqualTo("You have 5 coins."));
         }
 
         [TestCase("Title Label (1)", "Title")]

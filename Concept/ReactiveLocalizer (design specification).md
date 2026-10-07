@@ -32,7 +32,7 @@ Locked on 2026-10-04 after a full design review. It supersedes `ReactiveLocalize
 
 1. Samples live in `UnityPackage/Samples~/<Sample>/`, each with its own asmdef.
 2. Tests live in `UnityPackage/Tests/<Area>/`, named `reromanlee.ReactiveLocalizer.Tests.<Area>`.
-3. The pure assemblies (core and authoring) and their tests also build with plain `dotnet` from `DotNet/`, whose projects link the package sources. A Unity-only API can then never slip in unnoticed, and a future .NET (NuGet) release stays possible.
+3. The pure assemblies (core and authoring) and their tests also build with plain `dotnet` from `DotNet/`, whose projects link the package sources. A Unity-only API can then never slip in unnoticed, and a future .NET (NuGet) release stays possible. `DotNet/CldrGenerator` writes the core's CLDR data (section 10).
 4. `UnityProject/` is the host project for tests and player builds, as in Wireframes.
 
 ## 4. Languages and catalogs
@@ -49,6 +49,7 @@ A language is a record the project defines. Standard codes are optional metadata
 | `Fallback` *(optional)* | `English` for `Pirate` | Where missing entries come from |
 | `Direction` | `LeftToRight`, `RightToLeft` | A hint for whatever renders the text |
 | `Required` *(optional)* | `true` | A build fails while any entry is missing in this language |
+| `Digits`, `DecimalSeparator`, `GroupSeparator` *(optional)* | `0123456789`, `,`, `\u00A0` | Number symbols that replace the culture's |
 
 1. **The source language** is the one the project writes in, and can be any language (`@source Russian` for a Russian-first project). It defines the key set, is the last fallback for every language, and is the language the localizer starts in until project code picks another.
 2. **Changing the source language later** is a tool operation, never a core change:
@@ -56,9 +57,10 @@ A language is a record the project defines. Standard codes are optional metadata
    2. It swaps the roles of the files.
    3. It re-stamps the fingerprints, keeping anything that was already outdated flagged.
 3. **Plural rules** come from `Culture`. Without one they come from the fallback language, and without either, every count uses ICU's `other` form.
-4. **Number symbols** (decimal and grouping separators, digits) come from `Culture` the same way, and any language can override them in its catalog section.
-5. **Runtime languages.** Languages can be registered at runtime, for example a fan translation a player drops into a mods folder. Generated constants are only a convenience for the languages known at compile time.
-6. **The OS language** is mapped to a project language by project code (a switch). The Quick Start sample shows the pattern.
+4. **Number symbols** (decimal and grouping separators, digits) come from `Culture` the same way, and any language can override them in its catalog section with `Digits`, `DecimalSeparator` and `GroupSeparator`. An empty `GroupSeparator` turns grouping off. Arabic with Latin digits is `Culture = ar` and `Digits = 0123456789`.
+5. **A culture CLDR doesn't know** is reported as a warning, and the language then takes its plural rules and number symbols from its fallback, as if it had no culture. A known culture without plural data of its own uses CLDR's root rules, as CLDR does.
+6. **Runtime languages.** Languages can be registered at runtime, for example a fan translation a player drops into a mods folder. Generated constants are only a convenience for the languages known at compile time.
+7. **The OS language** is mapped to a project language by project code (a switch). The Quick Start sample shows the pattern.
 
 ### 4.2 Catalogs
 
@@ -157,7 +159,7 @@ Purchase [3fa2c1] = Купить
     3. newlines escaped;
     4. invisible characters (non-breaking spaces, zero-width and bidi marks) written as `\u` escapes so they show up in reviews;
     5. the file's existing line endings kept, and LF for new files.
-11. **ICU syntax** inside values follows ICU's own rules. A literal `{` is written `'{'`, and an ordinary apostrophe like in `Don't` needs nothing.
+11. **ICU syntax** inside values follows ICU's own rules. A literal `{` is written `'{'`, and an ordinary apostrophe like in `Don't` needs nothing. Entries created from text a project already shows, such as the *Localize* action does, are quoted so they show exactly that text.
 12. **Editing outside the tool** (merge conflict resolution, AI agents, hand fixes) is supported and validated, not forbidden. The editor is the primary path but not the only one.
 
 ### 5.4 Foolproofing
@@ -231,6 +233,10 @@ Purchase [3fa2c1] = Купить
 | Table still loading | The binding keeps its previous text; empty only on the very first load | Nothing |
 | Table failed to load | Fallback-language text, loaded as a recovery | An error with the reason; the task reports the failure |
 | Broken ICU in a translation | Fallback-language text | An import error with file, line and column |
+| Broken ICU in the source language | The text as written | An import error with file, line and column |
+| A message missing an argument, or given one of the wrong kind | `{coins}` for a missing one; a wrong one as it is, choosing the `other` form | One error per unique problem |
+| No formatter registered for a type such as `{deadline, date}` | The value as it is, dates as `yyyy-MM-dd HH:mm:ss` | One error per argument |
+| An entry with arguments read as plain text | `{coins}` in place of each argument | One warning per entry |
 
 1. **One error per unique missing key per session.** Errors are used rather than warnings, so Unity Test Framework fails any test that touches a missing key.
 2. **Missing-key counters** can be read from code, so a pre-release smoke test can assert "zero missing keys".
@@ -264,7 +270,7 @@ Purchase [3fa2c1] = Купить
    binding.Dispose();
    ```
 
-   1. It applies the text immediately, then again whenever the text changes: a language switch, an `OnDemand` table arriving, a table file edited in the editor (live, in Play and Edit Mode, arriving with the editor tooling of step 4), or new arguments via `binding.SetMessage(...)`.
+   1. It applies the text immediately, then again whenever the text changes: a language switch, an `OnDemand` table arriving, a table file edited in the editor (live, in Play and Edit Mode, arriving with the editor tooling of step 4), or new arguments via `binding.SetMessage(...)`, which formats only when the arguments differ, so calling it every frame costs nothing.
    2. Binding and updating allocate nothing. The handle is a struct, and the callback is a static lambda that receives its target as state. The callback can take the text as a `string` or as characters.
    3. Disposing a stale or copied handle is a safe no-op.
    4. A binding keeps its `OnDemand` table loaded while it's alive.
@@ -284,16 +290,25 @@ Purchase [3fa2c1] = Купить
    2. `{n, number}` with the `integer` and `percent` styles;
    3. `{n, plural, …}` with `=N`, `offset:` and `#`;
    4. `{n, selectordinal, …}` and `{x, select, …}`;
-   5. nesting and apostrophe quoting.
-3. **Dates, times and currency** are not built in. `{deadline, date}` calls a formatter function the project registers.
+   5. nesting and apostrophe quoting, which follows ICU: an apostrophe only starts quoted text before a brace, or before `#` inside a plural form.
+
+   Arguments are named, since the names become the parameters of generated code. ICU's numbered arguments (`{0}`) and its deprecated `choice` are rejected with an explanation.
+3. **Dates, times and currency** are not built in. `{deadline, date}` calls the formatter the project registers for the type: `localizer.SetFormatter("date", formatter)`.
+   1. An `ArgumentFormatter` writes into a span it's given, so formatting allocates nothing, and is called again with more room when it reports the span too small.
+   2. It receives the style text (`short` in `{deadline, date, short}`) and the language of the text, whose culture names the conventions to follow.
+   3. A missing or throwing formatter never breaks the text; it's reported once.
 4. **Language data comes from CLDR (the Unicode Common Locale Data Repository).**
-   1. Plural rules (cardinal and ordinal) and number symbols are generated from CLDR into the core.
+   1. Plural rules (cardinal and ordinal) and number symbols are generated from CLDR into the core. The rules become code, one case per distinct rule set; the symbols are kept only for the locales whose symbols differ from the locale their tag shortens to, because a lookup shortens the tag (`de-CH`, then `de`) until it finds one.
    2. Nothing depends on `CultureInfo`, which has a history of platform-specific failures in IL2CPP builds. Output is identical on every device.
-   3. The generator is a repository tool, and its output is committed.
-5. **Import checks:**
-   1. syntax errors, reported with line and column;
-   2. every translation uses the same argument names and kinds as the source;
-   3. plural messages cover the forms their language needs (Russian: one, few, many, other; English: one, other) and always include `other`.
+   3. The generator is a repository tool pinned to one CLDR release (48.2.3), and its output is committed. Moving to another release is changing the version, running it, and reviewing the diff.
+5. **Numbers** are grouped as the language groups them (including Indian grouping and minimum grouping digits, so Spanish writes 1234 but 12.345), show up to three fraction digits rounded half to even, and use the language's digits. A plural form is chosen from the digits shown, so 1.0004 shows as 1 and takes the `one` form.
+6. **Text found in a fallback language** formats with that language's plural rules and symbols, because the words around the number are in that language.
+7. **At runtime** an `EntryMessage` struct carries the entry and its arguments, up to four without allocating. Arguments are matched by name, so a translation may use them in any order. `Get` returns the formatted string, `TryFormat` writes into a caller's buffer without allocating, and `Bind` keeps a message current.
+8. **Import checks:**
+   1. syntax errors, reported with line and column, counting the escapes written before them;
+   2. every translation uses the same argument names as the source, each in a way its value supports: a number may also be shown plainly, but text can't choose a plural form. A translation that doesn't match is left out, so it shows in its fallback language, with an error;
+   3. plural messages need `other`, and get a warning when they lack a form their language uses (Russian: one, few, many, other; English: one, other), unless exact forms stand in for it, as `=1` does for English `one`, and when they have a form their language never uses;
+   4. likely mistakes are warned about: `=#` inside a plural form, which turns a rich-text color into the number, and `#` inside a select within a plural, which ICU shows as is.
 
 ## 11. Code generation
 
@@ -304,6 +319,7 @@ Purchase [3fa2c1] = Купить
    1. The file is regenerated when keys, aliases or argument lists change.
    2. Text edits never touch it, so text edits never cause a recompile.
    3. A result identical to the existing file is never rewritten.
+   4. While a source text's message has errors, the file keeps its current members, so a typo in a text never breaks the code that calls it.
 3. **Shape:**
 
    ```csharp
@@ -315,9 +331,10 @@ Purchase [3fa2c1] = Купить
    LocalizationLanguages.Russian                   // languages, for the project's OS-language switch
    ```
 
-   1. **Argument types come from the source text.** Plural and number arguments accept any numeric type without boxing. Select arguments take strings.
-   2. **Argument changes break call sites at compile time.** That covers renaming, removing or adding an argument in the source.
-   3. The validator reserves `TableKey` and `CatalogKey` as entry names.
+   1. **Argument types come from the source text.** Plural and number arguments take a `MessageNumber`, which every numeric type converts to without boxing. Select arguments take strings. Anything shown as is or through a formatter takes a `MessageValue`.
+   2. **Parameters are sorted by name,** so rewording a text never reorders them.
+   3. **Argument changes break call sites at compile time.** That covers renaming, removing or adding an argument in the source.
+   4. The validator reserves `TableKey` and `CatalogKey` as entry names.
 4. **Opting out.** A table opts out with `@generateCode false`, for example a 50,000-line dialogue table referenced from data rather than code. It stays reachable by name (`localizer.Get(dialogueTable, line.Key)`, hashed without allocating).
 5. **Read-only packages.** Catalogs inside read-only packages ship their generated file. The tool never writes into a package it can't modify.
 
@@ -326,7 +343,7 @@ Purchase [3fa2c1] = Купить
 ### 12.1 Importers
 
 1. `ScriptedImporter`s compile `.lang` and `.catalog` files.
-2. Translation files declare a dependency on their source file, so they re-validate whenever it changes.
+2. Translation files declare a dependency on their source file, so they re-validate whenever it changes, and every table file on its catalog, whose cultures decide which plural forms are checked. A translation imported before its source file existed is imported again once it arrives.
 
 ### 12.2 Validation and the build gate
 
@@ -442,7 +459,8 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
 | Host | `ILocalizerHost`, `UnityHost` |
 | Identity handles | `CatalogKey`, `TableKey`, `EntryKey`, `LanguageKey` |
 | Language record | `LanguageInfo` |
-| Entry with arguments | `EntryMessage` |
+| Entry with arguments | `EntryMessage`, `MessageArgument`, `MessageValue`, `MessageNumber` |
+| Formatter of a registered type | `ArgumentFormatter` |
 | Binding and observable | `TextBinding` (struct), `ReactiveText` (class) |
 | On-demand table hold | `TableHandle` |
 | Table sources | `EmbeddedTableSource`, `StreamingTableSource`, and in samples `AddressablesTableSource`, `ModFolderTableSource` |
@@ -467,7 +485,7 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
    1. reading then writing a file gives byte-identical output, and randomized input (escapes, invisible characters, merge markers) never crashes the parser and always reports its position;
    2. plural tests are generated from CLDR's sample numbers for every plural form of every language;
    3. golden values pin the hash function, since a change would silently break every saved reference;
-   4. the generated code and the XLSX, CSV and XLIFF output are compared against reference files kept in the repository;
+   4. the generated code and the XLSX, CSV and XLIFF output are compared against reference files kept in the repository, and the fast lane also compiles generated code with Roslyn as C# 9, the language Unity compiles;
    5. language switches stay all-or-nothing under concurrent reads from other threads;
    6. `OnDemand` tables load and unload as their users come and go;
    7. bindings whose target was destroyed get released;

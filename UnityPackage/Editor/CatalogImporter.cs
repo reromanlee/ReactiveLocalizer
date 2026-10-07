@@ -12,7 +12,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
     internal sealed class CatalogImporter : ScriptedImporter
     {
         /// <summary>Raised whenever the import's checks change, so every catalog file is imported again.</summary>
-        public const int Version = 1;
+        public const int Version = 2;
 
         public override void OnImportAsset(AssetImportContext context)
         {

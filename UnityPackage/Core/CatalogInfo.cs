@@ -1,4 +1,5 @@
 using reromanlee.ReactiveLocalizer.Documents;
+using reromanlee.ReactiveLocalizer.Formatting;
 using System;
 using System.Collections.Generic;
 
@@ -12,6 +13,7 @@ namespace reromanlee.ReactiveLocalizer
     {
         private readonly Dictionary<ulong, LanguageInfo> _languages;
         private readonly Dictionary<ulong, TableInfo> _tables;
+        private readonly Dictionary<ulong, LanguageFormat> _formats;
 
         /// <summary>Creates a catalog definition.</summary>
         /// <exception cref="ArgumentException">
@@ -67,6 +69,11 @@ namespace reromanlee.ReactiveLocalizer
             SourceLanguage = source;
             Languages = languages;
             Tables = tableList;
+            _formats = new Dictionary<ulong, LanguageFormat>(languages.Count);
+            for (int i = 0; i < languages.Count; i++)
+            {
+                ResolveFormat(languages[i]);
+            }
         }
 
         /// <summary>Identity of the catalog.</summary>
@@ -86,6 +93,13 @@ namespace reromanlee.ReactiveLocalizer
 
         /// <summary>Returns the table with <paramref name="key"/>.</summary>
         public bool TryGetTable(TableKey key, out TableInfo table) => _tables.TryGetValue(key.Hash, out table) && !key.IsEmpty;
+
+        /// <summary>
+        /// Returns how <paramref name="language"/> formats messages: its plural rules and number symbols, from its
+        /// culture, else inherited from its fallback, with its own symbols applied over either.
+        /// </summary>
+        internal LanguageFormat GetFormat(LanguageInfo language) =>
+            language != null && _formats.TryGetValue(language.Key.Hash, out LanguageFormat format) ? format : LanguageFormat.Root;
 
         /// <summary>
         /// Returns the languages a lookup in <paramref name="language"/> tries, in order: the language itself, its
@@ -154,6 +168,21 @@ namespace reromanlee.ReactiveLocalizer
             return new CatalogInfo(key, new LanguageKey(sourceAttribute.Value), languages, tables);
         }
 
+        /// <summary>Resolves the format of a language after the format of its fallback; the constructor already rejected loops.</summary>
+        private LanguageFormat ResolveFormat(LanguageInfo language)
+        {
+            if (_formats.TryGetValue(language.Key.Hash, out LanguageFormat format))
+            {
+                return format;
+            }
+            LanguageFormat inherited = language.HasFallback && _languages.TryGetValue(language.Fallback.Hash, out LanguageInfo fallback)
+                ? ResolveFormat(fallback)
+                : LanguageFormat.Root;
+            format = LanguageFormat.Resolve(language.Culture, inherited, language.Digits, language.DecimalSeparator, language.GroupSeparator, out _);
+            _formats[language.Key.Hash] = format;
+            return format;
+        }
+
         private static LanguageInfo ReadLanguage(CatalogDocumentLanguage section, HashSet<ulong> names, ICollection<DocumentIssue> issues)
         {
             LanguageKey key = new(section.Name);
@@ -166,6 +195,11 @@ namespace reromanlee.ReactiveLocalizer
                 if (culture.Length > 0 && !LooksLikeLanguageTag(culture))
                 {
                     Report(issues, IssueSeverity.Warning, cultureField.Line, $"'{culture}' doesn't look like a language tag such as 'en' or 'pt-BR'; plural rules and number formatting may not recognize it.");
+                }
+                else if (culture.Length > 0 && !NumberSymbols.TryFind(culture, out _))
+                {
+                    string inherited = section.TryGetField(DocumentNames.Fallback, out _) ? "the fallback language" : "CLDR's root locale, with only the 'other' plural form";
+                    Report(issues, IssueSeverity.Warning, cultureField.Line, $"CLDR doesn't know the culture '{culture}', so plural rules and number formatting come from {inherited}.");
                 }
             }
 
@@ -211,7 +245,33 @@ namespace reromanlee.ReactiveLocalizer
                     Report(issues, IssueSeverity.Error, requiredField.Line, $"Required is 'true' or 'false', not '{requiredField.Value}'.");
                 }
             }
-            return new LanguageInfo(key, displayName, culture, fallback, direction, isRequired);
+            string digits = null;
+            if (section.TryGetField(DocumentNames.Digits, out DocumentProperty digitsField))
+            {
+                if (NumberSymbols.AreValidDigits(digitsField.Value))
+                {
+                    digits = digitsField.Value;
+                }
+                else
+                {
+                    Report(issues, IssueSeverity.Error, digitsField.Line, "Digits are the ten digits from zero to nine, written in order, such as 0123456789.");
+                }
+            }
+            string decimalSeparator = null;
+            if (section.TryGetField(DocumentNames.DecimalSeparator, out DocumentProperty decimalField))
+            {
+                if (decimalField.Value.Length > 0)
+                {
+                    decimalSeparator = decimalField.Value;
+                }
+                else
+                {
+                    Report(issues, IssueSeverity.Error, decimalField.Line, "A decimal separator can't be empty; write an escape such as \u00A0 for a space.");
+                }
+            }
+            // Present but empty means never grouping, which is why an absent field and an empty one differ.
+            string groupSeparator = section.TryGetField(DocumentNames.GroupSeparator, out DocumentProperty groupField) ? groupField.Value : null;
+            return new LanguageInfo(key, displayName, culture, fallback, direction, isRequired, digits, decimalSeparator, groupSeparator);
         }
 
         /// <summary>Drops the fallback of every language whose fallbacks lead back to it, reporting each loop once.</summary>
@@ -230,7 +290,8 @@ namespace reromanlee.ReactiveLocalizer
                     continue;
                 }
                 Report(issues, IssueSeverity.Error, document.Languages[i].Line, $"The fallbacks of '{language.Name}' lead back to it; its fallback is ignored.");
-                LanguageInfo unlooped = new(language.Key, language.DisplayName, language.Culture, default, language.Direction, language.IsRequired);
+                LanguageInfo unlooped = new(language.Key, language.DisplayName, language.Culture, default, language.Direction, language.IsRequired,
+                    language.Digits, language.DecimalSeparator, language.GroupSeparator);
                 languages[i] = unlooped;
                 byHash[language.Key.Hash] = unlooped;
             }

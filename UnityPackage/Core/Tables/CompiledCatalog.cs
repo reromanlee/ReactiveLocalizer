@@ -12,7 +12,8 @@ namespace reromanlee.ReactiveLocalizer.Tables
     /// uint32 magic, uint16 version, uint16 flags
     /// string catalog name, int32 source language index
     /// int32 language count, then per language:
-    ///     string name, string display name, string culture, int32 fallback index or -1, byte direction, byte required
+    ///     string name, string display name, string culture, int32 fallback index or -1, byte direction, byte required,
+    ///     then digits, decimal separator and group separator, each a byte telling whether it's set, then the string
     /// int32 table count, then per table: string name, byte loading, byte delivery
     /// </code>
     /// </remarks>
@@ -22,7 +23,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
         public const uint Magic = 0x42434C52;
 
         /// <summary>Raised whenever the layout changes, so an older file is rebuilt instead of misread.</summary>
-        public const ushort Version = 1;
+        public const ushort Version = 2;
 
         public static byte[] Write(CatalogInfo catalog)
         {
@@ -42,6 +43,9 @@ namespace reromanlee.ReactiveLocalizer.Tables
                 writer.WriteInt32(language.HasFallback ? IndexOf(catalog.Languages, language.Fallback) : -1);
                 writer.WriteByte((byte)language.Direction);
                 writer.WriteByte(language.IsRequired ? (byte)1 : (byte)0);
+                WriteOptional(writer, language.Digits);
+                WriteOptional(writer, language.DecimalSeparator);
+                WriteOptional(writer, language.GroupSeparator);
             }
             writer.WriteInt32(catalog.Tables.Count);
             for (int i = 0; i < catalog.Tables.Count; i++)
@@ -72,7 +76,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
             if (!reader.TryReadUInt16(out _) ||
                 !reader.TryReadString(out string catalogName) ||
                 !reader.TryReadInt32(out int sourceIndex) ||
-                !reader.TryReadCount(18, out int languageCount) ||
+                !reader.TryReadCount(21, out int languageCount) ||
                 !NameRules.IsValid(catalogName) ||
                 (uint)sourceIndex >= (uint)languageCount)
             {
@@ -87,6 +91,9 @@ namespace reromanlee.ReactiveLocalizer.Tables
             int[] fallbacks = new int[languageCount];
             byte[] directions = new byte[languageCount];
             byte[] requirements = new byte[languageCount];
+            string[] digits = new string[languageCount];
+            string[] decimalSeparators = new string[languageCount];
+            string[] groupSeparators = new string[languageCount];
             for (int i = 0; i < languageCount; i++)
             {
                 if (!reader.TryReadString(out names[i]) ||
@@ -95,6 +102,9 @@ namespace reromanlee.ReactiveLocalizer.Tables
                     !reader.TryReadInt32(out fallbacks[i]) ||
                     !reader.TryReadByte(out directions[i]) ||
                     !reader.TryReadByte(out requirements[i]) ||
+                    !TryReadOptional(ref reader, out digits[i]) ||
+                    !TryReadOptional(ref reader, out decimalSeparators[i]) ||
+                    !TryReadOptional(ref reader, out groupSeparators[i]) ||
                     !NameRules.IsValid(names[i]) ||
                     fallbacks[i] < -1 ||
                     fallbacks[i] >= languageCount ||
@@ -133,7 +143,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
                 {
                     LanguageKey fallback = fallbacks[i] < 0 ? default : new LanguageKey(names[fallbacks[i]]);
                     languages[i] = new LanguageInfo(new LanguageKey(names[i]), displayNames[i], cultures[i], fallback,
-                        (TextDirection)directions[i], requirements[i] != 0);
+                        (TextDirection)directions[i], requirements[i] != 0, digits[i], decimalSeparators[i], groupSeparators[i]);
                 }
                 catalog = new CatalogInfo(new CatalogKey(catalogName), new LanguageKey(names[sourceIndex]), languages, tables);
             }
@@ -144,6 +154,25 @@ namespace reromanlee.ReactiveLocalizer.Tables
             }
             error = null;
             return true;
+        }
+
+        private static void WriteOptional(ByteWriter writer, string value)
+        {
+            writer.WriteByte(value != null ? (byte)1 : (byte)0);
+            if (value != null)
+            {
+                writer.WriteString(value);
+            }
+        }
+
+        private static bool TryReadOptional(ref ByteReader reader, out string value)
+        {
+            value = null;
+            if (!reader.TryReadByte(out byte isSet) || isSet > 1)
+            {
+                return false;
+            }
+            return isSet == 0 || reader.TryReadString(out value);
         }
 
         private static int IndexOf(IReadOnlyList<LanguageInfo> languages, LanguageKey key)

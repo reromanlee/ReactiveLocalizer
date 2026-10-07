@@ -1,4 +1,5 @@
 using reromanlee.ReactiveLocalizer.Documents;
+using reromanlee.ReactiveLocalizer.Messages;
 using reromanlee.ReactiveLocalizer.Unity;
 using System;
 using System.Collections.Generic;
@@ -99,7 +100,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 line.Append('\n');
             }
             line.Append(uniqueKey).Append(" = ");
-            TextEscaping.Escape(text ?? string.Empty, line);
+            // The text is shown as it is, so braces and apostrophes are quoted rather than read as a message.
+            TextEscaping.Escape(MessageQuoting.Quote(text), line);
             line.Append('\n');
             File.AppendAllText(path, line.ToString());
             AssetDatabase.ImportAsset(path);
