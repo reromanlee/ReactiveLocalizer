@@ -1,0 +1,42 @@
+name: Fast lane
+
+# Runs on every push to any branch, and on pull requests to test the merged result. It takes about a minute and needs no
+# Unity license; the Unity lane in continuous-integration.yml runs on pull requests and on main.
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - '**.jpg'
+      - '**.png'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.jpg'
+      - '**.png'
+  workflow_dispatch:
+
+# A newer push to the same branch or pull request replaces the run in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dotnet:
+    name: Pure assemblies on .NET
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      # Builds the core and authoring assemblies from the package sources, with warnings as errors, and runs their tests.
+      - name: Build and test the pure assemblies
+        run: dotnet test DotNet/ReactiveLocalizer.slnx --configuration Release
