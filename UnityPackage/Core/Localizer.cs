@@ -52,6 +52,8 @@ namespace reromanlee.ReactiveLocalizer
         // Tables nothing held at the last update; they unload at the next one unless something holds them again.
         private readonly List<ulong> _releasedTables = new();
         private readonly List<TableKey> _heldTables = new();
+        // Languages registered before the catalog arrived, added as soon as it does.
+        private readonly List<LanguageInfo> _pendingLanguages = new();
         private CatalogInfo _catalog;
         private LanguageSwitch _pendingSwitch;
         private LanguageKey _startingLanguage;
@@ -612,6 +614,69 @@ namespace reromanlee.ReactiveLocalizer
             }
         }
 
+        // Languages.
+
+        /// <summary>
+        /// Adds <paramref name="language"/> to the catalog for as long as the localizer lives, such as a fan translation
+        /// a player dropped into a mods folder, so it can be switched to like any other language.
+        /// </summary>
+        /// <remarks>
+        /// Safe from any thread, and applied on the host thread in order with every other request, so switching to the
+        /// language right after registering it works. Registered before initialization, it can be the language
+        /// initialization starts in. A name the catalog already has, or a fallback it doesn't, is reported and changes
+        /// nothing. The language's tables come from the table sources like any other's, such as one reading the mods
+        /// folder.
+        /// </remarks>
+        /// <exception cref="ArgumentNullException"><paramref name="language"/> is null.</exception>
+        public void RegisterLanguage(LanguageInfo language)
+        {
+            if (language == null)
+            {
+                throw new ArgumentNullException(nameof(language));
+            }
+            if (IsDisposed)
+            {
+                ReportDisposedUse();
+                return;
+            }
+            RunOnHost(() => AddLanguage(language));
+        }
+
+        private void AddLanguage(LanguageInfo language)
+        {
+            if (IsDisposed)
+            {
+                return;
+            }
+            if (_catalog == null)
+            {
+                _pendingLanguages.Add(language);
+                return;
+            }
+            if (TryAddLanguage(_catalog, language, out CatalogInfo catalog))
+            {
+                PublishCatalog(catalog);
+            }
+        }
+
+        private bool TryAddLanguage(CatalogInfo catalog, LanguageInfo language, out CatalogInfo extended)
+        {
+            if (catalog.TryAddLanguage(language, out extended, out string error))
+            {
+                return true;
+            }
+            Report(ReportSeverity.Error, $"The language '{language.Name}' wasn't registered: {error}");
+            extended = catalog;
+            return false;
+        }
+
+        private void PublishCatalog(CatalogInfo catalog)
+        {
+            _catalog = catalog;
+            _loader.Catalog = catalog;
+            Volatile.Write(ref _publishedCatalog, catalog);
+        }
+
         /// <summary>Applies a new binding's first text: right away on the host thread, else at the host's next update.</summary>
         private void ApplyBinding(int index, int generation)
         {
@@ -855,9 +920,12 @@ namespace reromanlee.ReactiveLocalizer
                 FailInitialization();
                 return;
             }
-            _catalog = catalog;
-            _loader.Catalog = catalog;
-            Volatile.Write(ref _publishedCatalog, catalog);
+            for (int i = 0; i < _pendingLanguages.Count; i++)
+            {
+                TryAddLanguage(catalog, _pendingLanguages[i], out catalog);
+            }
+            _pendingLanguages.Clear();
+            PublishCatalog(catalog);
 
             LanguageInfo start = catalog.SourceLanguage;
             if (!_startingLanguage.IsEmpty)
