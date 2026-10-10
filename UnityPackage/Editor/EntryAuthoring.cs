@@ -1,11 +1,9 @@
-using reromanlee.ReactiveLocalizer.Documents;
 using reromanlee.ReactiveLocalizer.Messages;
 using reromanlee.ReactiveLocalizer.Unity;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
@@ -85,47 +83,29 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 return false;
             }
 
-            string sourceLanguage = catalog.Info.SourceLanguage.Name;
-            string path = $"{catalog.Folder}/{tableName}.{sourceLanguage}.{LocalizationFiles.TableExtension}";
-            if (catalog.TryGetTable(new TableKey(tableName), out IndexedTable table) && table.SourcePath != null)
+            TableEdit edit = new(catalog, tableName);
+            if (edit.Files.Source?.HasErrors == true)
             {
-                path = table.SourcePath;
+                problem = $"The {catalog.Info.SourceLanguage.Name} file of '{tableName}' has errors. Fix them first, since rewriting the file would drop the lines that have them.";
+                return false;
             }
-            string existing = File.Exists(path) ? File.ReadAllText(path) : string.Empty;
-            string uniqueKey = MakeUnique(TableDocument.Parse(existing), key);
-
-            StringBuilder line = new();
-            if (existing.Length > 0 && existing[existing.Length - 1] != '\n')
-            {
-                line.Append('\n');
-            }
-            line.Append(uniqueKey).Append(" = ");
             // The text is shown as it is, so braces and apostrophes are quoted rather than read as a message.
-            TextEscaping.Escape(MessageQuoting.Quote(text), line);
-            line.Append('\n');
-            File.AppendAllText(path, line.ToString());
-            AssetDatabase.ImportAsset(path);
-            CatalogIndex.Invalidate();
+            string quoted = MessageQuoting.Quote(text ?? string.Empty);
+            string uniqueKey = key;
+            for (int number = 2; !edit.Files.TryAddEntry(uniqueKey, quoted, out problem); number++)
+            {
+                // A taken key, or a former name of another entry, gets a number; nothing else makes adding fail here.
+                if (number > 999)
+                {
+                    return false;
+                }
+                uniqueKey = key + number;
+            }
+            TableEdit.Save($"Create {tableName}.{uniqueKey}", edit);
 
             reference = new EntryReference(catalog.Name, tableName, uniqueKey);
             problem = null;
             return true;
-        }
-
-        private static string MakeUnique(TableDocument document, string key)
-        {
-            if (!document.TryGetEntry(key, out _))
-            {
-                return key;
-            }
-            for (int number = 2; ; number++)
-            {
-                string candidate = key + number;
-                if (!document.TryGetEntry(candidate, out _))
-                {
-                    return candidate;
-                }
-            }
         }
 
         /// <summary>Splits a name into words at every character that can't be in a name, and where lower case meets upper case.</summary>

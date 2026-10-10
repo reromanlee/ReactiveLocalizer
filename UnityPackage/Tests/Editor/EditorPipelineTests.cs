@@ -287,6 +287,23 @@ namespace reromanlee.ReactiveLocalizer.Tests
         }
 
         [Test]
+        public void CreatingEntries_CanBeUndoneStepByStep()
+        {
+            string english = File.ReadAllText($"{Folder}/Shop.English.lang");
+
+            Assert.That(EntryAuthoring.TryCreateEntry("Game", "Shop", "Refund", "Return it", out _, out string problem), Is.True, problem);
+            Assert.That(EntryAuthoring.TryCreateEntry("Game", "Hud", "Health", "Health", out _, out problem), Is.True, problem);
+            Assert.That(File.ReadAllText($"{Folder}/Shop.English.lang"), Does.Contain("Refund = Return it"));
+
+            Undo.PerformUndo();
+            Assert.That(File.Exists($"{Folder}/Hud.English.lang"), Is.False);
+            Undo.PerformUndo();
+            Assert.That(File.ReadAllText($"{Folder}/Shop.English.lang"), Is.EqualTo(english));
+            Undo.PerformRedo();
+            Assert.That(File.ReadAllText($"{Folder}/Shop.English.lang"), Does.Contain("Refund = Return it"));
+        }
+
+        [Test]
         public void TryCreateEntry_RejectsMissingCatalogsAndInvalidNames()
         {
             Assert.That(EntryAuthoring.TryCreateEntry("Nowhere", "Shop", "Refund", "Text", out _, out string missing), Is.False);
