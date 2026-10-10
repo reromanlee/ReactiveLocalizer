@@ -304,6 +304,40 @@ namespace reromanlee.ReactiveLocalizer.Tests
         }
 
         [Test]
+        public void EntryPreview_ShowsTheTextInThePreviewLanguageOrWhatIsWrong()
+        {
+            LocalizationUserSettings settings = LocalizationUserSettings.instance;
+            string previous = settings.PreviewLanguage;
+            try
+            {
+                settings.PreviewLanguage = string.Empty;
+                Assert.That(EntryPreview.Describe(new EntryReference("Game", "Shop", "Purchase")).Text, Is.EqualTo("Buy"));
+
+                settings.PreviewLanguage = "Russian";
+                EntryDescription purchase = EntryPreview.Describe(new EntryReference("Game", "Shop", "Purchase"));
+                EntryDescription title = EntryPreview.Describe(new EntryReference("Game", "Shop", "Title"));
+                EntryDescription renamed = EntryPreview.Describe(new EntryReference("Game", "Shop", "BuyButton"));
+                EntryDescription missing = EntryPreview.Describe(new EntryReference("Game", "Shop", "Purchse"));
+                EntryDescription elsewhere = EntryPreview.Describe(new EntryReference("Game", "Shop", "Purchase"), "Tools");
+
+                Assert.That(purchase.Kind, Is.EqualTo(EntryPreviewKind.Found));
+                Assert.That(purchase.Text, Is.EqualTo("Kupit"));
+                Assert.That(title.Text, Is.EqualTo("Shop"));
+                Assert.That(title.Tooltip, Does.Contain("Russian"));
+                Assert.That(renamed.Kind, Is.EqualTo(EntryPreviewKind.Renamed));
+                Assert.That(renamed.Fix, Is.EqualTo(new EntryReference("Game", "Shop", "Purchase")));
+                Assert.That(missing.Kind, Is.EqualTo(EntryPreviewKind.Broken));
+                Assert.That(missing.Text, Does.Contain("Did you mean 'Shop.Purchase'?"));
+                Assert.That(elsewhere.Kind, Is.EqualTo(EntryPreviewKind.Broken));
+                Assert.That(EntryPreview.Describe(default).Kind, Is.EqualTo(EntryPreviewKind.Unpicked));
+            }
+            finally
+            {
+                settings.PreviewLanguage = previous;
+            }
+        }
+
+        [Test]
         public void CreatingEntries_LeavesGeneratedCodeUntilTheEditorLosesFocus()
         {
             KeysGenerator.Run();
