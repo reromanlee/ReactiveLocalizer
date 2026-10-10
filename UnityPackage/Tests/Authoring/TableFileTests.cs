@@ -173,5 +173,27 @@ namespace reromanlee.ReactiveLocalizer.Tests
 
             Assert.That(names, Is.EqualTo(new[] { "Intro", "line1", "Line2", "Line9", "Line10" }));
         }
+
+        [Test]
+        public void IndexOf_FollowsEveryChangeToTheEntries()
+        {
+            TableFile file = new();
+            for (int i = 0; i < 1000; i++)
+            {
+                Assert.That(file.TryAddEntry(new TableFileEntry("Entry" + i, "Text")), Is.True);
+            }
+
+            Assert.That(file.IndexOf("entry999"), Is.EqualTo(999));
+            Assert.That(file.TryAddEntry(new TableFileEntry("ENTRY5", "Taken")), Is.False);
+            file.Entries.Reverse();
+            Assert.That(file.IndexOf("Entry999"), Is.EqualTo(0));
+            Assert.That(file.RemoveEntry("Entry999"), Is.True);
+            Assert.That(file.IndexOf("Entry999"), Is.EqualTo(-1));
+            Assert.That(file.RenameEntry("Entry0", "First"), Is.True);
+            Assert.That(file.IndexOf("Entry0"), Is.EqualTo(-1));
+            Assert.That(file.IndexOf("First"), Is.EqualTo(998));
+            file.Entries.Add(new TableFileEntry("Added", "Directly"));
+            Assert.That(file.IndexOf("added"), Is.EqualTo(999));
+        }
     }
 }

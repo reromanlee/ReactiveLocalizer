@@ -20,6 +20,11 @@ namespace reromanlee.ReactiveLocalizer.Authoring
     {
         private static readonly string[] SettingOrder = { DocumentNames.Loading, DocumentNames.Delivery, DocumentNames.GenerateCode };
 
+        // Where each key's entry was last seen in Entries. Entries can be changed from outside, so every hit is checked
+        // against the list, and a changed count rebuilds the index.
+        private Dictionary<string, int> _index;
+        private int _indexedCount;
+
         /// <summary>Creates an empty table file that writes LF line endings.</summary>
         public TableFile() : this("\n", false)
         {
@@ -37,7 +42,10 @@ namespace reromanlee.ReactiveLocalizer.Authoring
         /// <summary>The table settings, such as <c>@loading</c>; only a source-language file has any.</summary>
         public List<DocumentProperty> Settings { get; } = new();
 
-        /// <summary>The entries. <see cref="Write"/> sorts them, so their order here never matters.</summary>
+        /// <summary>
+        /// The entries. <see cref="Write"/> sorts them, so their order here never matters. Lookups notice entries added,
+        /// removed or reordered here, but not one replaced in place by an entry with another key.
+        /// </summary>
         public List<TableFileEntry> Entries { get; } = new();
 
         /// <summary>Comments after the last entry.</summary>
@@ -75,17 +83,28 @@ namespace reromanlee.ReactiveLocalizer.Authoring
             return entry != null;
         }
 
-        /// <summary>Returns the position of the entry with <paramref name="key"/>, ignoring case, or -1.</summary>
+        /// <summary>Returns the position of the entry with <paramref name="key"/>, ignoring case, or -1. Takes constant time.</summary>
         public int IndexOf(string key)
         {
-            for (int i = 0; i < Entries.Count; i++)
+            if (key == null)
             {
-                if (string.Equals(Entries[i].Key, key, StringComparison.OrdinalIgnoreCase))
-                {
-                    return i;
-                }
+                return -1;
             }
-            return -1;
+            if (_index == null || _indexedCount != Entries.Count)
+            {
+                RebuildIndex();
+            }
+            if (!_index.TryGetValue(key, out int index))
+            {
+                return -1;
+            }
+            if (index < Entries.Count && string.Equals(Entries[index].Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return index;
+            }
+            // The list was reordered or changed from outside since the index was built.
+            RebuildIndex();
+            return _index.TryGetValue(key, out index) ? index : -1;
         }
 
         /// <summary>Adds an entry. Returns false, adding nothing, when the key is already taken, ignoring case.</summary>
@@ -96,6 +115,12 @@ namespace reromanlee.ReactiveLocalizer.Authoring
                 return false;
             }
             Entries.Add(entry);
+            // The lookup above left the index current, so it takes the new entry without a rebuild.
+            if (_index != null && _indexedCount == Entries.Count - 1)
+            {
+                _index.TryAdd(entry.Key, Entries.Count - 1);
+                _indexedCount = Entries.Count;
+            }
             return true;
         }
 
@@ -108,6 +133,7 @@ namespace reromanlee.ReactiveLocalizer.Authoring
                 return false;
             }
             Entries.RemoveAt(index);
+            _index = null;
             return true;
         }
 
@@ -126,7 +152,20 @@ namespace reromanlee.ReactiveLocalizer.Authoring
                 return false;
             }
             Entries[index].Key = newKey;
+            _index = null;
             return true;
+        }
+
+        private void RebuildIndex()
+        {
+            _index ??= new Dictionary<string, int>(Entries.Count, StringComparer.OrdinalIgnoreCase);
+            _index.Clear();
+            for (int i = 0; i < Entries.Count; i++)
+            {
+                // The first of two entries differing only in case wins, as a reader finds it first.
+                _index.TryAdd(Entries[i].Key, i);
+            }
+            _indexedCount = Entries.Count;
         }
 
         /// <summary>Returns the value of the setting named <paramref name="name"/>, ignoring case, or null.</summary>
