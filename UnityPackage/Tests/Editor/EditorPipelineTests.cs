@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.TestTools;
 
@@ -334,6 +335,51 @@ namespace reromanlee.ReactiveLocalizer.Tests
             finally
             {
                 settings.PreviewLanguage = previous;
+            }
+        }
+
+        [Test]
+        public void EditModePreview_ShowsTextInThePreviewLanguage()
+        {
+            LocalizationUserSettings settings = LocalizationUserSettings.instance;
+            string previous = settings.PreviewLanguage;
+            try
+            {
+                settings.PreviewLanguage = string.Empty;
+                ILocalizer preview = EditModePreview.For(new CatalogKey("Game"));
+
+                Assert.That(EditModePreview.IsActive, Is.True);
+                Assert.That(preview.Get(Purchase), Is.EqualTo("Buy"));
+                settings.PreviewLanguage = "Russian";
+                Assert.That(preview.Get(Purchase), Is.EqualTo("Kupit"));
+                settings.PreviewLanguage = "Klingon";
+                Assert.That(preview.Get(Purchase), Is.EqualTo("Buy"));
+                Assert.That(EditModePreview.For(new CatalogKey("Nowhere")), Is.Null);
+            }
+            finally
+            {
+                settings.PreviewLanguage = previous;
+            }
+        }
+
+        [Test]
+        public void SavingAScene_SavesTheAuthoredTextInsteadOfThePreview()
+        {
+            GameObject previewed = new("Previewed");
+            int restored = 0;
+            int shown = 0;
+            EditModePreview.Track(previewed.transform, () => restored++, () => shown++);
+            try
+            {
+                Assert.That(EditorSceneManager.SaveScene(previewed.scene, $"{Folder}/Previewed.unity", true), Is.True);
+
+                Assert.That(restored, Is.EqualTo(1));
+                Assert.That(shown, Is.EqualTo(1));
+            }
+            finally
+            {
+                EditModePreview.Untrack(previewed.transform);
+                Object.DestroyImmediate(previewed);
             }
         }
 
