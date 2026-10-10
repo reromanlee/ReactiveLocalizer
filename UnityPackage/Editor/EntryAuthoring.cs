@@ -65,22 +65,32 @@ namespace reromanlee.ReactiveLocalizer.Editor
         /// </summary>
         public static string SuggestTable(GameObject context)
         {
-            string owner = null;
+            return SuggestOwnerTable(context) ?? "Common";
+        }
+
+        /// <summary>Returns the table named after the prefab or scene owning <paramref name="context"/>, or null when it has no usable name, as an unsaved scene.</summary>
+        internal static string SuggestOwnerTable(GameObject context)
+        {
+            if (context == null)
+            {
+                return null;
+            }
+            string owner;
             PrefabStage stage = PrefabStageUtility.GetCurrentPrefabStage();
-            if (stage != null && context != null && stage.IsPartOfPrefabContents(context))
+            if (stage != null && stage.IsPartOfPrefabContents(context))
             {
                 owner = Path.GetFileNameWithoutExtension(stage.assetPath);
             }
-            else if (context != null && PrefabUtility.IsPartOfPrefabAsset(context))
+            else if (PrefabUtility.IsPartOfPrefabAsset(context))
             {
                 owner = Path.GetFileNameWithoutExtension(AssetDatabase.GetAssetPath(context));
             }
-            else if (context != null && context.scene.IsValid())
+            else
             {
-                owner = context.scene.name;
+                owner = context.scene.IsValid() ? context.scene.name : null;
             }
             string table = JoinPascalCase(SplitWords(owner));
-            return NameRules.IsValid(table) ? table : "Common";
+            return NameRules.IsValid(table) ? table : null;
         }
 
         /// <summary>

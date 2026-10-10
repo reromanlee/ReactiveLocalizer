@@ -14,7 +14,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
 
         /// <summary>
         /// Starts a draft in one of <paramref name="catalogs"/>, preferring <paramref name="preferredCatalog"/>. The table
-        /// and key are suggested from <paramref name="context"/> and <paramref name="fieldName"/>.
+        /// is named after the prefab or scene of <paramref name="context"/>, else <paramref name="lastTable"/>; the key
+        /// after <paramref name="context"/> and <paramref name="fieldName"/>.
         /// </summary>
         /// <param name="catalogs">The catalogs the entry may go to; only usable and writable ones are offered.</param>
         /// <param name="preferredCatalog">The catalog to start in, such as the field's current one; null for the default catalog.</param>
@@ -33,16 +34,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
             }
             _catalogs = writable;
             Catalog = Pick(writable, preferredCatalog);
-            if (context != null)
-            {
-                TableName = EntryAuthoring.SuggestTable(context);
-                Key = EntryAuthoring.SuggestKey(context.name, fieldName);
-            }
-            else
-            {
-                TableName = NameRules.IsValid(lastTable) ? lastTable : EntryAuthoring.SuggestTable(null);
-                Key = EntryAuthoring.SuggestKey(fieldName);
-            }
+            TableName = EntryAuthoring.SuggestOwnerTable(context) ?? (NameRules.IsValid(lastTable) ? lastTable : EntryAuthoring.SuggestTable(null));
+            Key = context != null ? EntryAuthoring.SuggestKey(context.name, fieldName) : EntryAuthoring.SuggestKey(fieldName);
             Text = string.Empty;
         }
 

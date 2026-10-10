@@ -5,7 +5,9 @@ using reromanlee.ReactiveLocalizer.Unity;
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace reromanlee.ReactiveLocalizer.Tests
 {
@@ -108,17 +110,28 @@ namespace reromanlee.ReactiveLocalizer.Tests
         [Test]
         public void Draft_NamesItsKeyAfterTheGameObjectAndTheField()
         {
+            // Unity allows one unsaved scene at a time; the test runner's own scene may already be it.
+            Scene active = SceneManager.GetActiveScene();
+            bool isAddingScene = !string.IsNullOrEmpty(active.path);
+            Scene unsaved = isAddingScene ? EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive) : active;
             GameObject sword = new("Sword");
+            SceneManager.MoveGameObjectToScene(sword, unsaved);
             try
             {
                 EntryDraft draft = new(new[] { _game }, null, sword, "_description", "Hud");
 
                 Assert.That(draft.Catalog, Is.SameAs(_game));
                 Assert.That(draft.Key, Is.EqualTo("SwordDescription"));
+                // An unsaved scene has no name to give a table, which leaves the table used last.
+                Assert.That(draft.TableName, Is.EqualTo("Hud"));
             }
             finally
             {
                 Object.DestroyImmediate(sword);
+                if (isAddingScene)
+                {
+                    EditorSceneManager.CloseScene(unsaved, true);
+                }
             }
         }
 
