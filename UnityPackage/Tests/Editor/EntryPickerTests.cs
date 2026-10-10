@@ -151,5 +151,52 @@ namespace reromanlee.ReactiveLocalizer.Tests
         {
             Assert.That(EntryAuthoring.SuggestKey(gameObjectName, fieldName), Is.EqualTo(expectedKey));
         }
+
+        [Test]
+        public void Field_ShowsTheEntryAndUpdatesAFormerName()
+        {
+            EntryHolder holder = ScriptableObject.CreateInstance<EntryHolder>();
+            holder.Entry = new EntryReference("Game", "Shop", "BuyButton");
+            try
+            {
+                using SerializedObject serializedObject = new(holder);
+                SerializedProperty property = serializedObject.FindProperty(nameof(EntryHolder.Entry));
+                EntryReferenceField field = new(property, "Entry", null, nameof(EntryHolder.Entry));
+
+                Assert.That(field.value, Is.EqualTo(holder.Entry));
+                Assert.That(EntryReferenceDrawer.GetDisplayName(field.value, false), Is.EqualTo("Shop.BuyButton"));
+                EntryDescription description = EntryPreview.Describe(field.value);
+                Assert.That(description.Kind, Is.EqualTo(EntryPreviewKind.Renamed));
+
+                EntryReferenceDrawer.Assign(new Object[] { holder }, property.propertyPath, description.Fix);
+
+                Assert.That(holder.Entry, Is.EqualTo(new EntryReference("Game", "Shop", "Purchase")));
+            }
+            finally
+            {
+                Object.DestroyImmediate(holder);
+            }
+        }
+
+        [Test]
+        public void CreatingAnEntryForAField_IsOneUndoStep()
+        {
+            EntryHolder holder = ScriptableObject.CreateInstance<EntryHolder>();
+            try
+            {
+                Assert.That(EntryAuthoring.TryCreateEntry("Game", "Shop", "Fresh", "Brand new", out EntryReference created, out string problem), Is.True, problem);
+                EntryReferenceDrawer.Assign(new Object[] { holder }, nameof(EntryHolder.Entry), created);
+                Assert.That(holder.Entry, Is.EqualTo(created));
+
+                Undo.PerformUndo();
+
+                Assert.That(holder.Entry.IsEmpty, Is.True);
+                Assert.That(File.ReadAllText($"{Folder}/Game/Shop.English.lang"), Does.Not.Contain("Fresh"));
+            }
+            finally
+            {
+                Object.DestroyImmediate(holder);
+            }
+        }
     }
 }
