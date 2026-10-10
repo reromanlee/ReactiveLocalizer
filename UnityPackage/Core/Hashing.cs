@@ -54,6 +54,24 @@ namespace reromanlee.ReactiveLocalizer
         /// </summary>
         public static uint ComputeFingerprint(ReadOnlySpan<char> sourceText) => (uint)(ComputeTextHash(sourceText) >> 40);
 
+        /// <summary>
+        /// Hashes a set of name hashes, given sorted and without repeats, so equal sets hash alike whatever order their
+        /// names were written in. Never zero, which stands for an unknown set.
+        /// </summary>
+        public static ulong ComputeSetHash(ReadOnlySpan<ulong> sortedHashes)
+        {
+            ulong hash = OffsetBasis;
+            for (int i = 0; i < sortedHashes.Length; i++)
+            {
+                ulong value = sortedHashes[i];
+                for (int shift = 0; shift < 64; shift += 16)
+                {
+                    hash = Append(hash, (char)(value >> shift));
+                }
+            }
+            return hash == 0 ? 1 : hash;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static ulong Append(ulong hash, char character)
         {

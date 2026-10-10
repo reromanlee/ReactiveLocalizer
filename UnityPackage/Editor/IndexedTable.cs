@@ -1,5 +1,6 @@
 using reromanlee.ReactiveLocalizer.Authoring;
 using reromanlee.ReactiveLocalizer.Documents;
+using reromanlee.ReactiveLocalizer.Tables;
 using System.Collections.Generic;
 
 namespace reromanlee.ReactiveLocalizer.Editor
@@ -27,7 +28,10 @@ namespace reromanlee.ReactiveLocalizer.Editor
 
         public TableSettings Settings { get; private set; } = TableSettings.Default;
 
-        public TableInfo Info => new(Key, Settings.Loading, Settings.Delivery);
+        /// <summary>Identifies the keys of the source-language file, which complete translations are compiled with; zero without one.</summary>
+        public ulong KeysHash { get; private set; }
+
+        public TableInfo Info => new(Key, Settings.Loading, Settings.Delivery, KeysHash);
 
         /// <summary>Asset paths of the table's files, one per language.</summary>
         public IEnumerable<string> FilePaths => _files.Values;
@@ -49,6 +53,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
             SourcePath = path;
             SourceDocument = CatalogIndex.ReadTableDocument(path);
             Settings = TableSettings.Read(SourceDocument, issues);
+            KeysHash = TableCompiler.ComputeKeysHash(SourceDocument);
         }
     }
 }

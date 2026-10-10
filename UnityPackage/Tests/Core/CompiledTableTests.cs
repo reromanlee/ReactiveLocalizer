@@ -11,6 +11,7 @@ namespace reromanlee.ReactiveLocalizer.Tests
         private static readonly CatalogKey Catalog = new("Localization");
         private static readonly TableKey Shop = new("Shop");
         private static readonly LanguageKey English = new("English");
+        private static readonly LanguageKey Russian = new("Russian");
 
         [Test]
         public void Compile_ThenRead_FindsEveryEntryByItsHash()
@@ -116,12 +117,84 @@ namespace reromanlee.ReactiveLocalizer.Tests
         public void TryRead_RejectsHashesOutOfOrder()
         {
             byte[] data = Compile("Purchase = Buy\nTitle = Shop", new List<DocumentIssue>());
-            // Swap the two eight-byte key hashes that follow the 44-byte header.
+            // Swap the two eight-byte key hashes that follow the header.
+            const int first = CompiledTableFormat.HeaderSize;
             byte[] swapped = (byte[])data.Clone();
-            Array.Copy(data, 44, swapped, 52, 8);
-            Array.Copy(data, 52, swapped, 44, 8);
+            Array.Copy(data, first, swapped, first + 8, 8);
+            Array.Copy(data, first + 8, swapped, first, 8);
 
-            Assert.That(CompiledTable.TryRead(swapped, out _, out _), Is.False);
+            Assert.That(CompiledTable.TryRead(data, out _, out _), Is.True);
+            Assert.That(CompiledTable.TryRead(swapped, out _, out string error), Is.False);
+            Assert.That(error, Does.Contain("out of order"));
+        }
+
+        [Test]
+        public void Compile_MarksTheSourceLanguageAndCompleteTranslationsComplete()
+        {
+            CatalogInfo catalog = CreateCatalog();
+            TableDocument source = TableDocument.Parse("Purchase = Buy\nTitle = Shop");
+            ulong keysHash = TableCompiler.ComputeKeysHash(source);
+
+            CompiledTable english = Read(TableCompiler.Compile(catalog, Shop, English, source, null, null));
+            CompiledTable complete = Read(TableCompiler.Compile(catalog, Shop, Russian, TableDocument.Parse("Title = Magazin\nPurchase = Kupit"), source, null));
+            CompiledTable partial = Read(TableCompiler.Compile(catalog, Shop, Russian, TableDocument.Parse("Purchase = Kupit"), source, null));
+            CompiledTable withoutSource = Read(TableCompiler.Compile(catalog, Shop, Russian, TableDocument.Parse("Title = Magazin\nPurchase = Kupit"), null, null));
+            CompiledTable withoutCatalog = CompileAndRead("Purchase = Buy\nTitle = Shop");
+
+            Assert.That(english.IsComplete(keysHash), Is.True);
+            Assert.That(complete.IsComplete(keysHash), Is.True);
+            Assert.That(partial.IsComplete(keysHash), Is.False);
+            Assert.That(withoutSource.IsComplete(keysHash), Is.False);
+            Assert.That(withoutCatalog.IsComplete(keysHash), Is.False);
+            Assert.That(english.IsComplete(0), Is.False);
+        }
+
+        [Test]
+        public void Compile_LeavesATranslationIncompleteWhileAMessageIsLeftOut()
+        {
+            CatalogInfo catalog = CreateCatalog();
+            TableDocument source = TableDocument.Parse("Coins = {coins, plural, one {# coin} other {# coins}}");
+            TableDocument broken = TableDocument.Parse("Coins = {coins, plural, one {# moneta}");
+
+            CompiledTable table = Read(TableCompiler.Compile(catalog, Shop, Russian, broken, source, null));
+
+            Assert.That(table.IsComplete(TableCompiler.ComputeKeysHash(source)), Is.False);
+        }
+
+        [Test]
+        public void ComputeKeysHash_DependsOnTheKeysOnly()
+        {
+            ulong keysHash = TableCompiler.ComputeKeysHash(TableDocument.Parse("Purchase = Buy\nTitle = Shop"));
+
+            Assert.That(TableCompiler.ComputeKeysHash(TableDocument.Parse("# Context\nTitle = Store\nPURCHASE = Get")), Is.EqualTo(keysHash));
+            Assert.That(TableCompiler.ComputeKeysHash(TableDocument.Parse("Purchase = Buy")), Is.Not.EqualTo(keysHash));
+            Assert.That(TableCompiler.ComputeKeysHash(TableDocument.Parse(string.Empty)), Is.Not.Zero);
+        }
+
+        [Test]
+        public void Compile_GivesATranslationTheAliasesOfTheSourceText()
+        {
+            CatalogInfo catalog = CreateCatalog();
+            TableDocument source = TableDocument.Parse("@formerly BuyButton\nPurchase = Buy\nTitle = Shop");
+            List<DocumentIssue> issues = new();
+
+            CompiledTable table = Read(TableCompiler.Compile(catalog, Shop, Russian, TableDocument.Parse("Purchase = Kupit"), source, issues));
+            CompiledTable repeated = Read(TableCompiler.Compile(catalog, Shop, Russian, TableDocument.Parse("@formerly BuyButton\nPurchase = Kupit"), source, issues));
+
+            Assert.That(Find(table, "BuyButton"), Is.EqualTo("Kupit"));
+            Assert.That(Find(repeated, "BuyButton"), Is.EqualTo("Kupit"));
+            Assert.That(issues, Is.Empty);
+        }
+
+        private static CatalogInfo CreateCatalog()
+        {
+            return CatalogInfo.FromDocument(Catalog, CatalogDocument.Parse("@source English\n[English]\nCulture = en\n[Russian]\nCulture = ru"), null, null);
+        }
+
+        private static CompiledTable Read(byte[] data)
+        {
+            Assert.That(CompiledTable.TryRead(data, out CompiledTable table, out string error), Is.True, error);
+            return table;
         }
 
         [Test]

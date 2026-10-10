@@ -14,7 +14,7 @@ namespace reromanlee.ReactiveLocalizer.Tests
         private static readonly TableInfo[] Tables =
         {
             new(new TableKey("Shop"), TableLoading.Preload, TableDelivery.Embedded),
-            new(new TableKey("Dialogue"), TableLoading.OnDemand, TableDelivery.Streaming)
+            new(new TableKey("Dialogue"), TableLoading.OnDemand, TableDelivery.Streaming, 0x0123456789ABCDEFUL)
         };
 
         private const string Document =
@@ -147,6 +147,9 @@ namespace reromanlee.ReactiveLocalizer.Tests
             Assert.That(read.Languages[0].GroupSeparator, Is.Null);
             Assert.That(read.Tables.Count, Is.EqualTo(2));
             Assert.That(read.Tables[1].Delivery, Is.EqualTo(TableDelivery.Streaming));
+            Assert.That(read.Tables[1].Loading, Is.EqualTo(TableLoading.OnDemand));
+            Assert.That(read.Tables[1].KeysHash, Is.EqualTo(0x0123456789ABCDEFUL));
+            Assert.That(read.Tables[0].KeysHash, Is.Zero);
         }
 
         [Test]
