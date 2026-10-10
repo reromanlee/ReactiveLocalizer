@@ -6,15 +6,22 @@ namespace reromanlee.ReactiveLocalizer.Tests
 {
     public class EntrySearchTests
     {
-        private static readonly EntrySearchItem[] Items =
+        private static readonly List<EntrySearchItem> Items = CreateItems();
+
+        private static List<EntrySearchItem> CreateItems()
         {
-            new("Game", "Shop", "Purchase", "Buy"),
-            new("Game", "Shop", "PurchaseFailed", "Couldn't buy it"),
-            new("Game", "Shop", "Refund", "Return the purchase"),
-            new("Game", "Menu", "Line10", "Ten"),
-            new("Game", "Menu", "Line9", "Nine"),
-            new("Game", "Menu", "Buy", "Purchase now")
-        };
+            List<EntrySearchItem> items = new()
+            {
+                new("Game", "Shop", "Purchase", "Buy"),
+                new("Game", "Shop", "PurchaseFailed", "Couldn't buy it"),
+                new("Game", "Shop", "Refund", "Return the purchase"),
+                new("Game", "Menu", "Line10", "Ten"),
+                new("Game", "Menu", "Line9", "Nine"),
+                new("Game", "Menu", "Buy", "Purchase now")
+            };
+            EntrySearch.Sort(items);
+            return items;
+        }
 
         private static List<string> Find(string query, int limit = 10)
         {
@@ -41,6 +48,24 @@ namespace reromanlee.ReactiveLocalizer.Tests
         {
             Assert.That(Find(string.Empty, 3), Is.EqualTo(new[] { "Menu.Buy", "Menu.Line9", "Menu.Line10" }));
             Assert.That(Find("nothing like this"), Is.Empty);
+        }
+
+        [Test]
+        public void Find_UpToTheLimit_KeepsTheBestMatches()
+        {
+            Assert.That(Find("purchase", 2), Is.EqualTo(new[] { "Shop.Purchase", "Shop.PurchaseFailed" }));
+            Assert.That(Find("line", 1), Is.EqualTo(new[] { "Menu.Line9" }));
+        }
+
+        [Test]
+        public void Sort_LeavesItemsInOrderAsTheyAre()
+        {
+            List<EntrySearchItem> sorted = new(Items);
+
+            EntrySearch.Sort(sorted);
+
+            Assert.That(sorted, Is.EqualTo(Items));
+            Assert.That(Items.ConvertAll(item => item.QualifiedName), Is.EqualTo(new[] { "Menu.Buy", "Menu.Line9", "Menu.Line10", "Shop.Purchase", "Shop.PurchaseFailed", "Shop.Refund" }));
         }
     }
 }
