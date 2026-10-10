@@ -20,7 +20,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
     internal sealed class TableImporter : ScriptedImporter
     {
         /// <summary>Raised whenever the import's output changes, so every table file is imported again.</summary>
-        public const int Version = 2;
+        public const int Version = 3;
 
         public override void OnImportAsset(AssetImportContext context)
         {

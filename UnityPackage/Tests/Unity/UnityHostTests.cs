@@ -28,7 +28,8 @@ namespace reromanlee.ReactiveLocalizer.Tests
             UnityHost host = new(source);
 
             Assert.That(host.TableSources[0], Is.SameAs(source));
-            Assert.That(host.TableSources[host.TableSources.Count - 1], Is.TypeOf<EmbeddedTableSource>());
+            Assert.That(host.TableSources[host.TableSources.Count - 2], Is.TypeOf<EmbeddedTableSource>());
+            Assert.That(host.TableSources[host.TableSources.Count - 1], Is.TypeOf<StreamingTableSource>());
         }
 
         [Test]

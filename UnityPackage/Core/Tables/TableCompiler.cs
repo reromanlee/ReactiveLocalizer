@@ -40,7 +40,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
             {
                 throw new ArgumentException("A compiled table needs a document to compile.", nameof(document));
             }
-            return new Compilation(catalog, table, language, null, true, document, null, issues).Run();
+            return new Compilation(catalog, table, language, null, true, false, document, null, issues).Run();
         }
 
         /// <summary>
@@ -48,6 +48,10 @@ namespace reromanlee.ReactiveLocalizer.Tables
         /// against the forms their language uses, and a translation's messages against the arguments of the source
         /// text in <paramref name="sourceDocument"/>, leaving out entries that don't match.
         /// </summary>
+        /// <remarks>
+        /// A translation takes over the aliases of the source text, so renamed entries resolve in every language, and is
+        /// marked complete when it has every key of the source text, so a localizer loads no fallback language for it.
+        /// </remarks>
         /// <param name="catalog">The catalog the table belongs to.</param>
         /// <param name="table">The table being compiled.</param>
         /// <param name="language">The language of <paramref name="document"/>.</param>
@@ -79,7 +83,32 @@ namespace reromanlee.ReactiveLocalizer.Tables
             }
             bool isSource = language == catalog.SourceLanguage.Key;
             return new Compilation(catalog.Key, table, language, isKnown ? catalog.GetFormat(languageInfo) : null,
-                isSource, document, isSource ? null : sourceDocument, issues).Run();
+                isSource, true, document, isSource ? null : sourceDocument, issues).Run();
+        }
+
+        /// <summary>
+        /// Returns the hash identifying the keys of a table's source-language file, which its catalog carries and which
+        /// every complete translation of the table is compiled with. Never zero.
+        /// </summary>
+        internal static ulong ComputeKeysHash(TableDocument sourceDocument)
+        {
+            IReadOnlyList<TableDocumentEntry> entries = sourceDocument.Entries;
+            ulong[] hashes = new ulong[entries.Count];
+            for (int i = 0; i < hashes.Length; i++)
+            {
+                hashes[i] = Hashing.ComputeNameHash(entries[i].Key);
+            }
+            Array.Sort(hashes);
+            int count = 0;
+            for (int i = 0; i < hashes.Length; i++)
+            {
+                if (count == 0 || hashes[i] != hashes[count - 1])
+                {
+                    hashes[count] = hashes[i];
+                    count++;
+                }
+            }
+            return Hashing.ComputeSetHash(hashes.AsSpan(0, count));
         }
 
         private sealed class Compilation
@@ -89,19 +118,23 @@ namespace reromanlee.ReactiveLocalizer.Tables
             private readonly LanguageKey _language;
             private readonly LanguageFormat _format;
             private readonly bool _isSource;
+            private readonly bool _isMarkingCompleteness;
             private readonly TableDocument _document;
+            private readonly TableDocument _sourceDocument;
             private readonly SourceMessages _source;
             private readonly ICollection<DocumentIssue> _issues;
 
             public Compilation(CatalogKey catalog, TableKey table, LanguageKey language, LanguageFormat format,
-                bool isSource, TableDocument document, TableDocument sourceDocument, ICollection<DocumentIssue> issues)
+                bool isSource, bool isMarkingCompleteness, TableDocument document, TableDocument sourceDocument, ICollection<DocumentIssue> issues)
             {
                 _catalog = catalog;
                 _table = table;
                 _language = language;
                 _format = format;
                 _isSource = isSource;
+                _isMarkingCompleteness = isMarkingCompleteness;
                 _document = document;
+                _sourceDocument = sourceDocument;
                 _source = sourceDocument != null ? new SourceMessages(sourceDocument) : null;
                 _issues = issues;
             }
@@ -158,15 +191,17 @@ namespace reromanlee.ReactiveLocalizer.Tables
                 }
 
                 List<(ulong Hash, int Target)> aliases = CollectAliases(compiled, names);
+                ulong sourceKeysHash = ComputeSourceKeysHash(hashes);
 
                 // Write the layout described by CompiledTableFormat.
-                ByteWriter writer = new(56 + entryCount * 16 + aliases.Count * 12 + (messageStarts.Count + program.Count) * 4 + characters.Length * 2);
+                ByteWriter writer = new(CompiledTableFormat.HeaderSize + entryCount * 16 + aliases.Count * 12 + (messageStarts.Count + program.Count) * 4 + characters.Length * 2);
                 writer.WriteUInt32(CompiledTableFormat.Magic);
                 writer.WriteUInt16(CompiledTableFormat.Version);
                 writer.WriteUInt16(0);
                 writer.WriteUInt64(_catalog.Hash);
                 writer.WriteUInt64(_table.Hash);
                 writer.WriteUInt64(_language.Hash);
+                writer.WriteUInt64(sourceKeysHash);
                 writer.WriteInt32(entryCount);
                 writer.WriteInt32(aliases.Count);
                 writer.WriteInt32(messageStarts.Count);
@@ -202,6 +237,36 @@ namespace reromanlee.ReactiveLocalizer.Tables
                 }
                 characters.WriteTo(writer);
                 return writer.ToArray();
+            }
+
+            /// <summary>
+            /// Returns the source keys hash the table is marked with: the source file's own for a source language, the
+            /// source file's for a translation that has every one of its keys, and zero for anything else.
+            /// </summary>
+            /// <param name="sortedHashes">The hashes of the compiled entries, sorted.</param>
+            private ulong ComputeSourceKeysHash(ulong[] sortedHashes)
+            {
+                if (!_isMarkingCompleteness)
+                {
+                    return 0;
+                }
+                if (_isSource)
+                {
+                    return ComputeKeysHash(_document);
+                }
+                if (_sourceDocument == null)
+                {
+                    return 0;
+                }
+                IReadOnlyList<TableDocumentEntry> sourceEntries = _sourceDocument.Entries;
+                for (int i = 0; i < sourceEntries.Count; i++)
+                {
+                    if (Array.BinarySearch(sortedHashes, Hashing.ComputeNameHash(sourceEntries[i].Key)) < 0)
+                    {
+                        return 0;
+                    }
+                }
+                return ComputeKeysHash(_sourceDocument);
             }
 
             /// <summary>
@@ -350,39 +415,57 @@ namespace reromanlee.ReactiveLocalizer.Tables
 
             /// <summary>
             /// Collects every <c>@formerly</c> of the sorted entries as an alias hash and the index of the entry it
-            /// points to, sorted by hash. An alias may not reuse the name of an entry or of another alias.
+            /// points to, sorted by hash. An alias may not reuse the name of an entry or of another alias. A
+            /// translation also takes over the aliases its entries have in the source text, whose own import reports
+            /// their problems.
             /// </summary>
             private List<(ulong Hash, int Target)> CollectAliases(List<CompiledEntry> compiled, Dictionary<ulong, string> names)
             {
                 List<(ulong Hash, int Target)> aliases = new();
                 for (int i = 0; i < compiled.Count; i++)
                 {
-                    TableDocumentEntry entry = compiled[i].Entry;
-                    for (int a = 0; a < entry.Attributes.Count; a++)
+                    AddAliases(compiled[i].Entry, i, names, aliases, true);
+                    if (_source != null && _source.TryGetEntry(compiled[i].Hash, out TableDocumentEntry sourceEntry))
                     {
-                        DocumentProperty attribute = entry.Attributes[a];
-                        if (!string.Equals(attribute.Name, DocumentNames.Formerly, StringComparison.Ordinal))
-                        {
-                            continue;
-                        }
-                        string alias = attribute.Value;
-                        if (!NameRules.IsValid(alias))
-                        {
-                            AddIssue(IssueSeverity.Error, attribute.Line, 1, $"'@formerly {alias}' needs the entry's former name: {NameRules.Description}.");
-                            continue;
-                        }
-                        ulong hash = Hashing.ComputeNameHash(alias);
-                        if (names.TryGetValue(hash, out string taken))
-                        {
-                            AddIssue(IssueSeverity.Error, attribute.Line, 1, $"'@formerly {alias}' can't be an alias: '{taken}' already names an entry or alias of this table.");
-                            continue;
-                        }
-                        names.Add(hash, alias);
-                        aliases.Add((hash, i));
+                        AddAliases(sourceEntry, i, names, aliases, false);
                     }
                 }
                 aliases.Sort((left, right) => left.Hash.CompareTo(right.Hash));
                 return aliases;
+            }
+
+            private void AddAliases(TableDocumentEntry entry, int target, Dictionary<ulong, string> names, List<(ulong Hash, int Target)> aliases, bool isReporting)
+            {
+                for (int a = 0; a < entry.Attributes.Count; a++)
+                {
+                    DocumentProperty attribute = entry.Attributes[a];
+                    if (!string.Equals(attribute.Name, DocumentNames.Formerly, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+                    string alias = attribute.Value;
+                    if (!NameRules.IsValid(alias))
+                    {
+                        if (isReporting)
+                        {
+                            AddIssue(IssueSeverity.Error, attribute.Line, 1, $"'@formerly {alias}' needs the entry's former name: {NameRules.Description}.");
+                        }
+                        continue;
+                    }
+                    ulong hash = Hashing.ComputeNameHash(alias);
+                    if (names.TryGetValue(hash, out string taken))
+                    {
+                        // The same alias written in the translation and in the source text is one alias, not a conflict.
+                        bool isSameAlias = aliases.Exists(existing => existing.Hash == hash && existing.Target == target);
+                        if (isReporting && !isSameAlias)
+                        {
+                            AddIssue(IssueSeverity.Error, attribute.Line, 1, $"'@formerly {alias}' can't be an alias: '{taken}' already names an entry or alias of this table.");
+                        }
+                        continue;
+                    }
+                    names.Add(hash, alias);
+                    aliases.Add((hash, target));
+                }
             }
 
             private void AddIssue(IssueSeverity severity, int line, int column, string message)
@@ -459,6 +542,8 @@ namespace reromanlee.ReactiveLocalizer.Tables
                     _entries[Hashing.ComputeNameHash(source.Entries[i].Key)] = source.Entries[i];
                 }
             }
+
+            public bool TryGetEntry(ulong keyHash, out TableDocumentEntry entry) => _entries.TryGetValue(keyHash, out entry);
 
             public ParsedMessage Find(ulong keyHash)
             {

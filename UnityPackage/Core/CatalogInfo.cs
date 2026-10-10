@@ -94,6 +94,9 @@ namespace reromanlee.ReactiveLocalizer
         /// <summary>Returns the table with <paramref name="key"/>.</summary>
         public bool TryGetTable(TableKey key, out TableInfo table) => _tables.TryGetValue(key.Hash, out table) && !key.IsEmpty;
 
+        /// <summary>Returns the table whose name hashes to <paramref name="tableHash"/>.</summary>
+        internal bool TryGetTable(ulong tableHash, out TableInfo table) => _tables.TryGetValue(tableHash, out table);
+
         /// <summary>
         /// Returns how <paramref name="language"/> formats messages: its plural rules and number symbols, from its
         /// culture, else inherited from its fallback, with its own symbols applied over either.
@@ -168,6 +171,57 @@ namespace reromanlee.ReactiveLocalizer
             return new CatalogInfo(key, new LanguageKey(sourceAttribute.Value), languages, tables);
         }
 
+        /// <summary>
+        /// Reads the language sections of <paramref name="document"/> without a catalog around them, as for a fan
+        /// translation that adds its language to a game's catalog. Fallbacks may name languages the document doesn't
+        /// define; they are checked when the languages are registered.
+        /// </summary>
+        /// <remarks>
+        /// A field with a bad value is reported and treated as absent, as in a catalog file. The document's
+        /// attributes, such as <c>@source</c>, are ignored.
+        /// </remarks>
+        public static IReadOnlyList<LanguageInfo> ReadLanguages(CatalogDocument document, ICollection<DocumentIssue> issues)
+        {
+            if (document == null)
+            {
+                return Array.Empty<LanguageInfo>();
+            }
+            LanguageInfo[] languages = new LanguageInfo[document.Languages.Count];
+            for (int i = 0; i < languages.Length; i++)
+            {
+                languages[i] = ReadLanguage(document.Languages[i], null, issues);
+            }
+            return languages;
+        }
+
+        /// <summary>
+        /// Returns this catalog with <paramref name="language"/> added after its languages, as a runtime registration
+        /// does. Fails with a reason when the name is taken or the fallback isn't a language of the catalog.
+        /// </summary>
+        internal bool TryAddLanguage(LanguageInfo language, out CatalogInfo catalog, out string error)
+        {
+            catalog = null;
+            if (_languages.ContainsKey(language.Key.Hash))
+            {
+                error = $"'{language.Name}' is already a language of the catalog '{Key.Name}'.";
+                return false;
+            }
+            if (language.HasFallback && !_languages.ContainsKey(language.Fallback.Hash))
+            {
+                error = $"'{language.Name}' falls back to '{language.Fallback.Name}', which is not a language of the catalog '{Key.Name}'.";
+                return false;
+            }
+            LanguageInfo[] languages = new LanguageInfo[Languages.Count + 1];
+            for (int i = 0; i < Languages.Count; i++)
+            {
+                languages[i] = Languages[i];
+            }
+            languages[Languages.Count] = language;
+            catalog = new CatalogInfo(Key, SourceLanguage.Key, languages, Tables);
+            error = null;
+            return true;
+        }
+
         /// <summary>Resolves the format of a language after the format of its fallback; the constructor already rejected loops.</summary>
         private LanguageFormat ResolveFormat(LanguageInfo language)
         {
@@ -183,6 +237,9 @@ namespace reromanlee.ReactiveLocalizer
             return format;
         }
 
+        /// <param name="section">The language's section.</param>
+        /// <param name="names">The hashes of every language a fallback may name; null to accept any valid name.</param>
+        /// <param name="issues">Where problems are appended; null to ignore them.</param>
         private static LanguageInfo ReadLanguage(CatalogDocumentLanguage section, HashSet<ulong> names, ICollection<DocumentIssue> issues)
         {
             LanguageKey key = new(section.Name);
@@ -206,7 +263,11 @@ namespace reromanlee.ReactiveLocalizer
             LanguageKey fallback = default;
             if (section.TryGetField(DocumentNames.Fallback, out DocumentProperty fallbackField) && fallbackField.Value.Length > 0)
             {
-                if (!NameRules.IsValid(fallbackField.Value) || !names.Contains(Hashing.ComputeNameHash(fallbackField.Value)))
+                if (!NameRules.IsValid(fallbackField.Value))
+                {
+                    Report(issues, IssueSeverity.Error, fallbackField.Line, $"'{section.Name}' falls back to '{fallbackField.Value}', which isn't a language name: {NameRules.Description}.");
+                }
+                else if (names != null && !names.Contains(Hashing.ComputeNameHash(fallbackField.Value)))
                 {
                     Report(issues, IssueSeverity.Error, fallbackField.Line, $"'{section.Name}' falls back to '{fallbackField.Value}', which is not one of the catalog's language sections.");
                 }

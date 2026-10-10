@@ -124,8 +124,10 @@ namespace reromanlee.ReactiveLocalizer
         /// Pass a static lambda that takes its target as a parameter, such as
         /// <c>static (label, text) =&gt; label.text = text</c>, and binding allocates nothing. The callback runs on
         /// the host thread; bound from another thread, its first call is scheduled there. Before initialization the
-        /// first call receives an empty string. A callback that throws is reported, and other bindings still update.
-        /// A binding whose target the engine destroyed is released and reported.
+        /// first call receives an empty string. The binding holds its entry's table, so a table loaded on demand
+        /// loads with it and stays loaded while it is active; until the table arrives, the first call receives an
+        /// empty string. A callback that throws is reported, and other bindings still update. A binding whose target
+        /// the engine destroyed is released and reported.
         /// </remarks>
         /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="apply"/> is null.</exception>
         TextBinding Bind<TTarget>(in EntryKey key, TTarget target, Action<TTarget, string> apply) where TTarget : class;
@@ -137,5 +139,45 @@ namespace reromanlee.ReactiveLocalizer
         /// <remarks>Behaves like the binding of a key otherwise; formatting allocates only the string the callback receives.</remarks>
         /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="apply"/> is null.</exception>
         TextBinding Bind<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, string> apply) where TTarget : class;
+
+        /// <summary>
+        /// Calls <paramref name="apply"/> with the characters of <paramref name="key"/>'s text right away, and again
+        /// every time it changes, until the returned binding is disposed. No string is ever created, for consumers that
+        /// copy characters, such as TextMeshPro's <c>SetCharArray</c>.
+        /// </summary>
+        /// <remarks>
+        /// The characters are valid only during the call; copy them to keep them. Pass them on with
+        /// <c>MemoryMarshal.TryGetArray</c> where an array is needed. Behaves like
+        /// <see cref="Bind{TTarget}(in EntryKey, TTarget, Action{TTarget, string})"/> otherwise.
+        /// </remarks>
+        /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="apply"/> is null.</exception>
+        TextBinding BindCharacters<TTarget>(in EntryKey key, TTarget target, Action<TTarget, ReadOnlyMemory<char>> apply) where TTarget : class;
+
+        /// <summary>
+        /// Calls <paramref name="apply"/> with the characters of <paramref name="message"/> right away, and again every
+        /// time they change, until the returned binding is disposed. Messages are formatted into a buffer the binding
+        /// reuses, so updating allocates nothing at all.
+        /// </summary>
+        /// <remarks>
+        /// The characters are valid only during the call; copy them to keep them. Behaves like
+        /// <see cref="Bind{TTarget}(in EntryMessage, TTarget, Action{TTarget, string})"/> otherwise.
+        /// </remarks>
+        /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="apply"/> is null.</exception>
+        TextBinding BindCharacters<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, ReadOnlyMemory<char>> apply) where TTarget : class;
+
+        /// <summary>
+        /// Keeps <paramref name="table"/> loaded until the returned handle is disposed. A table set to
+        /// <c>@loading OnDemand</c> starts loading now, in the current language and the fallbacks it needs, and follows
+        /// every language switch while held; await <see cref="TableHandle.WhenLoaded"/> before reading it.
+        /// </summary>
+        /// <remarks>
+        /// Bindings hold their tables on their own, so holding is for code that reads a table directly, such as a
+        /// dialogue system. Holding a preloaded table changes nothing, so code never needs to know how a table loads.
+        /// Once nothing holds an on-demand table, it is unloaded two host updates later unless something holds it
+        /// again by then, so a panel toggled within a frame keeps its table. A table the catalog doesn't have is
+        /// reported once. Safe from any thread.
+        /// </remarks>
+        /// <exception cref="ArgumentException"><paramref name="table"/> is empty.</exception>
+        TableHandle HoldTable(TableKey table);
     }
 }

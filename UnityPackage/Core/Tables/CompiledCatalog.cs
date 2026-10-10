@@ -14,7 +14,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
     /// int32 language count, then per language:
     ///     string name, string display name, string culture, int32 fallback index or -1, byte direction, byte required,
     ///     then digits, decimal separator and group separator, each a byte telling whether it's set, then the string
-    /// int32 table count, then per table: string name, byte loading, byte delivery
+    /// int32 table count, then per table: string name, byte loading, byte delivery, uint64 keys hash
     /// </code>
     /// </remarks>
     internal static class CompiledCatalog
@@ -23,7 +23,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
         public const uint Magic = 0x42434C52;
 
         /// <summary>Raised whenever the layout changes, so an older file is rebuilt instead of misread.</summary>
-        public const ushort Version = 2;
+        public const ushort Version = 3;
 
         public static byte[] Write(CatalogInfo catalog)
         {
@@ -54,6 +54,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
                 writer.WriteString(table.Key.Name);
                 writer.WriteByte((byte)table.Loading);
                 writer.WriteByte((byte)table.Delivery);
+                writer.WriteUInt64(table.KeysHash);
             }
             return writer.ToArray();
         }
@@ -114,7 +115,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
                     return false;
                 }
             }
-            if (!reader.TryReadCount(6, out int tableCount))
+            if (!reader.TryReadCount(14, out int tableCount))
             {
                 error = "The catalog's table list is damaged.";
                 return false;
@@ -125,6 +126,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
                 if (!reader.TryReadString(out string tableName) ||
                     !reader.TryReadByte(out byte loading) ||
                     !reader.TryReadByte(out byte delivery) ||
+                    !reader.TryReadUInt64(out ulong keysHash) ||
                     !NameRules.IsValid(tableName) ||
                     loading > (byte)TableLoading.OnDemand ||
                     delivery > (byte)TableDelivery.Streaming)
@@ -132,7 +134,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
                     error = "A table of the catalog is damaged.";
                     return false;
                 }
-                tables[i] = new TableInfo(new TableKey(tableName), (TableLoading)loading, (TableDelivery)delivery);
+                tables[i] = new TableInfo(new TableKey(tableName), (TableLoading)loading, (TableDelivery)delivery, keysHash);
             }
 
             // What the format can't express, such as two languages with one name, is still rejected by CatalogInfo.

@@ -27,12 +27,13 @@ namespace reromanlee.ReactiveLocalizer.Tables
         private readonly char[] _characters;
         private readonly string[] _strings;
 
-        private CompiledTable(ulong catalogHash, ulong tableHash, ulong languageHash, ulong[] hashes, int[] starts,
+        private CompiledTable(ulong catalogHash, ulong tableHash, ulong languageHash, ulong sourceKeysHash, ulong[] hashes, int[] starts,
             int[] lengths, ulong[] aliasHashes, int[] aliasTargets, int[] messageStarts, int[] program, char[] characters)
         {
             CatalogHash = catalogHash;
             TableHash = tableHash;
             LanguageHash = languageHash;
+            SourceKeysHash = sourceKeysHash;
             _hashes = hashes;
             _starts = starts;
             _lengths = lengths;
@@ -50,7 +51,19 @@ namespace reromanlee.ReactiveLocalizer.Tables
 
         public ulong LanguageHash { get; }
 
+        /// <summary>
+        /// Identifies the keys of the source-language file when the table has every one of them; zero otherwise, as for
+        /// a translation with gaps or a table compiled without its catalog.
+        /// </summary>
+        public ulong SourceKeysHash { get; }
+
         public int EntryCount => _hashes.Length;
+
+        /// <summary>
+        /// Returns whether the table has every key of its source-language file, as identified by
+        /// <paramref name="expectedKeysHash"/> from the catalog, so its fallback languages are never needed.
+        /// </summary>
+        public bool IsComplete(ulong expectedKeysHash) => expectedKeysHash != 0 && SourceKeysHash == expectedKeysHash;
 
         /// <summary>How many distinct compiled messages the table holds.</summary>
         public int MessageCount => _messageStarts.Length;
@@ -144,6 +157,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
                 !reader.TryReadUInt64(out ulong catalogHash) ||
                 !reader.TryReadUInt64(out ulong tableHash) ||
                 !reader.TryReadUInt64(out ulong languageHash) ||
+                !reader.TryReadUInt64(out ulong sourceKeysHash) ||
                 !reader.TryReadInt32(out int entryCount) ||
                 !reader.TryReadInt32(out int aliasCount) ||
                 !reader.TryReadInt32(out int messageCount) ||
@@ -232,7 +246,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
                     return false;
                 }
             }
-            table = new CompiledTable(catalogHash, tableHash, languageHash, hashes, starts, lengths, aliasHashes, aliasTargets,
+            table = new CompiledTable(catalogHash, tableHash, languageHash, sourceKeysHash, hashes, starts, lengths, aliasHashes, aliasTargets,
                 messageStarts, program, characters);
             error = null;
             return true;

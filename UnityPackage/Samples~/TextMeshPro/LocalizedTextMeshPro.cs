@@ -1,5 +1,7 @@
 using reromanlee.ReactiveLocalizer.Samples.QuickStart;
 using reromanlee.ReactiveLocalizer.Unity;
+using System;
+using System.Runtime.InteropServices;
 using TMPro;
 using UnityEngine;
 
@@ -65,8 +67,19 @@ namespace reromanlee.ReactiveLocalizer.Samples.TextMeshPro
             {
                 _text = GetComponent<TMP_Text>();
             }
-            // The text component copies the characters into its own buffer, so this assignment allocates nothing.
-            _binding = GlobalLocalizer.For(_entry.ToCatalogKey()).Bind(_entry.ToKey(), _text, static (text, value) => text.SetText(value));
+            _binding = GlobalLocalizer.For(_entry.ToCatalogKey()).BindCharacters(_entry.ToKey(), _text, static (text, characters) => Show(text, characters));
+        }
+
+        /// <summary>Shows characters without creating a string: the text component copies them into its own buffer.</summary>
+        private static void Show(TMP_Text text, ReadOnlyMemory<char> characters)
+        {
+            if (MemoryMarshal.TryGetArray(characters, out ArraySegment<char> segment))
+            {
+                text.SetCharArray(segment.Array, segment.Offset, segment.Count);
+                return;
+            }
+            // Characters a string already holds, such as a missing key's marker.
+            text.SetText(characters.ToString());
         }
     }
 }

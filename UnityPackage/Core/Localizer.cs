@@ -24,7 +24,7 @@ namespace reromanlee.ReactiveLocalizer
     /// language or the new one, never a mix. Everything that changes the state runs on the host thread, in the order
     /// it was requested; work requested from other threads is queued for the host's next update.
     /// </remarks>
-    public sealed class Localizer : ILocalizer, IDisposable
+    public sealed partial class Localizer : ILocalizer, IDisposable
     {
         private readonly ILocalizerHost _host;
         private readonly BindingRegistry _bindings;
@@ -33,6 +33,11 @@ namespace reromanlee.ReactiveLocalizer
         private readonly ConcurrentQueue<Action> _hostActions = new();
         private readonly Action _update;
         private readonly Action<TableReceiver> _onReceived;
+        private readonly Action<ChainLoad> _onSwitchTableLoaded;
+        private readonly Action<ChainLoad> _onDemandTableLoaded;
+        private readonly Func<ulong, ulong, bool> _isLoadedTableNeeded;
+        private readonly Func<ulong, bool?> _getLoadedResult;
+        private readonly TableHolds _holds = new();
         private readonly object _lockObject = new();
 
         // Published for every thread: lookups read the state, and the catalog is shown once it is loaded.
@@ -42,7 +47,13 @@ namespace reromanlee.ReactiveLocalizer
 
         // Host thread only.
         private readonly List<TaskCompletionSource<bool>> _initialWaiters = new();
-        private Dictionary<(ulong Table, ulong Language), CompiledTable> _loadedTables = new();
+        private readonly TableLoader _loader;
+        private readonly Dictionary<ulong, ChainLoad> _onDemandLoads = new();
+        // Tables nothing held at the last update; they unload at the next one unless something holds them again.
+        private readonly List<ulong> _releasedTables = new();
+        private readonly List<TableKey> _heldTables = new();
+        // Languages registered before the catalog arrived, added as soon as it does.
+        private readonly List<LanguageInfo> _pendingLanguages = new();
         private CatalogInfo _catalog;
         private LanguageSwitch _pendingSwitch;
         private LanguageKey _startingLanguage;
@@ -69,6 +80,11 @@ namespace reromanlee.ReactiveLocalizer
             _bindings = new BindingRegistry(this);
             _update = Update;
             _onReceived = OnReceived;
+            _onSwitchTableLoaded = OnSwitchTableLoaded;
+            _onDemandTableLoaded = OnDemandTableLoaded;
+            _isLoadedTableNeeded = IsLoadedTableNeeded;
+            _getLoadedResult = GetLoadedResult;
+            _loader = new TableLoader(host, _onReceived, (severity, message) => Report(severity, message));
         }
 
         /// <inheritdoc/>
@@ -97,6 +113,11 @@ namespace reromanlee.ReactiveLocalizer
 
         /// <summary>How many bindings are active.</summary>
         public int BindingCount => _bindings.ActiveCount;
+
+        /// <summary>The task of a table that can't be loaded or isn't held: already completed, with false.</summary>
+        internal static Task<bool> NotLoaded { get; } = Task.FromResult(false);
+
+        private static Task<bool> Loaded { get; } = Task.FromResult(true);
 
         private bool IsDisposed => Volatile.Read(ref _isDisposed) != 0;
 
@@ -153,6 +174,7 @@ namespace reromanlee.ReactiveLocalizer
                 return;
             }
             _bindings.Clear();
+            _holds.Clear();
             Volatile.Write(ref _state, LocalizerState.Empty);
             TaskCompletionSource<bool> initialization;
             lock (_lockObject)
@@ -197,7 +219,7 @@ namespace reromanlee.ReactiveLocalizer
                 ReportEarlyRead();
                 return string.Empty;
             }
-            return Format(state, in message, true);
+            return Format(state, in message, false);
         }
 
         /// <inheritdoc/>
@@ -289,28 +311,44 @@ namespace reromanlee.ReactiveLocalizer
         // Bindings.
 
         /// <inheritdoc/>
-        public TextBinding Bind<TTarget>(in EntryKey key, TTarget target, Action<TTarget, string> apply) where TTarget : class
+        public TextBinding Bind<TTarget>(in EntryKey key, TTarget target, Action<TTarget, string> apply) where TTarget : class =>
+            Bind(in key, target, apply, BindingInvokers<TTarget>.Invoker, null);
+
+        /// <inheritdoc/>
+        public TextBinding Bind<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, string> apply) where TTarget : class =>
+            Bind(in message, target, apply, BindingInvokers<TTarget>.Invoker, null);
+
+        /// <inheritdoc/>
+        public TextBinding BindCharacters<TTarget>(in EntryKey key, TTarget target, Action<TTarget, ReadOnlyMemory<char>> apply) where TTarget : class =>
+            Bind(in key, target, apply, null, BindingInvokers<TTarget>.CharacterInvoker);
+
+        /// <inheritdoc/>
+        public TextBinding BindCharacters<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, ReadOnlyMemory<char>> apply) where TTarget : class =>
+            Bind(in message, target, apply, null, BindingInvokers<TTarget>.CharacterInvoker);
+
+        private TextBinding Bind(in EntryKey key, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker)
         {
-            if (target == null)
+            if (!CanBind(target, apply))
             {
-                throw new ArgumentNullException(nameof(target));
-            }
-            if (apply == null)
-            {
-                throw new ArgumentNullException(nameof(apply));
-            }
-            if (IsDisposed)
-            {
-                ReportDisposedUse();
                 return default;
             }
-            _bindings.Add(in key, target, apply, BindingInvokers<TTarget>.Invoker, out int index, out int generation);
+            _bindings.Add(in key, target, apply, invoker, characterInvoker, out int index, out int generation);
             ApplyBinding(index, generation);
             return new TextBinding(_bindings, index, generation);
         }
 
-        /// <inheritdoc/>
-        public TextBinding Bind<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, string> apply) where TTarget : class
+        private TextBinding Bind(in EntryMessage message, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker)
+        {
+            if (!CanBind(target, apply))
+            {
+                return default;
+            }
+            _bindings.Add(in message, target, apply, invoker, characterInvoker, out int index, out int generation);
+            ApplyBinding(index, generation);
+            return new TextBinding(_bindings, index, generation);
+        }
+
+        private bool CanBind(object target, Delegate apply)
         {
             if (target == null)
             {
@@ -323,11 +361,9 @@ namespace reromanlee.ReactiveLocalizer
             if (IsDisposed)
             {
                 ReportDisposedUse();
-                return default;
+                return false;
             }
-            _bindings.Add(in message, target, apply, BindingInvokers<TTarget>.Invoker, out int index, out int generation);
-            ApplyBinding(index, generation);
-            return new TextBinding(_bindings, index, generation);
+            return true;
         }
 
         /// <summary>
@@ -382,14 +418,20 @@ namespace reromanlee.ReactiveLocalizer
             RequestUpdate();
         }
 
-        /// <summary>Returns the text a message binding shows right now. Host thread only.</summary>
+        /// <summary>
+        /// Returns the text a message binding shows right now, or null while its on-demand table loads, so the binding
+        /// keeps its text. Host thread only.
+        /// </summary>
         internal string ResolveBindingText(in EntryMessage message)
         {
             LocalizerState state = Volatile.Read(ref _state);
-            return state.IsInitialized ? Format(state, in message, false) : string.Empty;
+            return state.IsInitialized ? Format(state, in message, true) : string.Empty;
         }
 
-        /// <summary>Returns the text a binding of <paramref name="key"/> shows right now. Host thread only.</summary>
+        /// <summary>
+        /// Returns the text a binding of <paramref name="key"/> shows right now, or null while its on-demand table
+        /// loads, so the binding keeps its text. Host thread only.
+        /// </summary>
         internal string ResolveBindingText(in EntryKey key)
         {
             LocalizerState state = Volatile.Read(ref _state);
@@ -407,7 +449,84 @@ namespace reromanlee.ReactiveLocalizer
                 ReportIfMessage(table, index, key.Table.Name, key.Name);
                 return table.GetString(index);
             }
-            return GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
+            return IsAwaitingTable(state, key.Table.Hash) ? null : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
+        }
+
+        /// <summary>
+        /// Gives the characters a character binding of <paramref name="key"/> shows right now, or returns false while
+        /// its on-demand table loads, so the binding keeps its text. Host thread only.
+        /// </summary>
+        internal bool TryResolveBindingCharacters(in EntryKey key, ref char[] buffer, out ReadOnlyMemory<char> characters)
+        {
+            characters = ReadOnlyMemory<char>.Empty;
+            LocalizerState state = Volatile.Read(ref _state);
+            if (!state.IsInitialized)
+            {
+                return true;
+            }
+            if (key.IsEmpty)
+            {
+                ReportEmptyKey();
+                return true;
+            }
+            if (state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out _))
+            {
+                ReportIfMessage(table, index, key.Table.Name, key.Name);
+                characters = table.GetMemory(index);
+                return true;
+            }
+            if (IsAwaitingTable(state, key.Table.Hash))
+            {
+                return false;
+            }
+            characters = GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash).AsMemory();
+            return true;
+        }
+
+        /// <summary>
+        /// Formats the message a character binding shows into <paramref name="buffer"/>, which grows when the text
+        /// outgrows it, or returns false while its on-demand table loads. Host thread only.
+        /// </summary>
+        internal bool TryResolveBindingCharacters(in EntryMessage message, ref char[] buffer, out ReadOnlyMemory<char> characters)
+        {
+            characters = ReadOnlyMemory<char>.Empty;
+            LocalizerState state = Volatile.Read(ref _state);
+            EntryKey key = message.Key;
+            if (!state.IsInitialized || key.IsEmpty)
+            {
+                return true;
+            }
+            if (!state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out int languageIndex))
+            {
+                if (IsAwaitingTable(state, key.Table.Hash))
+                {
+                    return false;
+                }
+                characters = GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash).AsMemory();
+                return true;
+            }
+            if (!table.TryGetMessage(index, out int start))
+            {
+                characters = table.GetMemory(index);
+                return true;
+            }
+            TextBuilder output = new(buffer);
+            try
+            {
+                Render(state, table, start, languageIndex, in message, ref output);
+                if (output.HasOutgrownInitialBuffer)
+                {
+                    // The buffer grows once to fit, and every later message of this size formats into it directly.
+                    buffer = new char[Math.Max(output.Length, buffer.Length * 2)];
+                    output.Text.CopyTo(buffer);
+                }
+                characters = new ReadOnlyMemory<char>(buffer, 0, output.Length);
+                return true;
+            }
+            finally
+            {
+                output.Dispose();
+            }
         }
 
         internal bool IsTargetDestroyed(object target)
@@ -433,410 +552,18 @@ namespace reromanlee.ReactiveLocalizer
             Report(ReportSeverity.Error, $"The binding callback of '{key}' threw, so it didn't receive its text: {exception}", target);
         }
 
-        // Host thread work.
-
-        /// <summary>Runs the work queued from other threads, in the order it was queued. Called by the host on its thread.</summary>
-        private void Update()
-        {
-            Volatile.Write(ref _isUpdateScheduled, 0);
-            while (_hostActions.TryDequeue(out Action action))
-            {
-                try
-                {
-                    action();
-                }
-                catch (Exception exception)
-                {
-                    Report(ReportSeverity.Error, $"Localizer work for the catalog '{CatalogKey.Name}' failed: {exception}");
-                }
-            }
-        }
-
-        /// <summary>
-        /// Runs <paramref name="action"/> on the host thread: right away when already there, unless earlier work is
-        /// still queued, which then runs first so requests apply in the order they were made.
-        /// </summary>
-        private void RunOnHost(Action action)
-        {
-            if (_host.IsHostThread)
-            {
-                if (_hostActions.IsEmpty)
-                {
-                    action();
-                    return;
-                }
-                _hostActions.Enqueue(action);
-                Update();
-                return;
-            }
-            _hostActions.Enqueue(action);
-            RequestUpdate();
-        }
-
-        private void RequestUpdate()
-        {
-            if (Interlocked.CompareExchange(ref _isUpdateScheduled, 1, 0) != 0)
-            {
-                return;
-            }
-            try
-            {
-                _host.ScheduleUpdate(_update);
-            }
-            catch (Exception exception)
-            {
-                Volatile.Write(ref _isUpdateScheduled, 0);
-                Report(ReportSeverity.Error, $"The host couldn't schedule the localizer's update: {exception}");
-            }
-        }
-
-        private void BeginInitialize()
-        {
-            if (IsDisposed)
-            {
-                return;
-            }
-            TableRequest request = TableRequest.ForCatalog(CatalogKey);
-            if (!TryLoad(in request, new TableReceiver(request, _onReceived, null)))
-            {
-                Report(ReportSeverity.Error, $"No table source has {request}. In Unity, check that the catalog exists and that the build includes it.");
-                FailInitialization();
-            }
-        }
-
-        private void RequestLanguage(LanguageKey key, TaskCompletionSource<bool> completion)
-        {
-            if (IsDisposed)
-            {
-                completion.TrySetResult(false);
-                return;
-            }
-            // Before the catalog arrives, a request only chooses the language initialization starts in.
-            if (_catalog == null)
-            {
-                _startingLanguage = key;
-                _initialWaiters.Add(completion);
-                return;
-            }
-            if (!_catalog.TryGetLanguage(key, out LanguageInfo target))
-            {
-                Report(ReportSeverity.Warning, $"'{key.Name}' is not a language of the catalog '{CatalogKey.Name}', so the language stays {CurrentLanguage?.Name ?? "unchanged"}.");
-                completion.TrySetResult(false);
-                return;
-            }
-            if (_pendingSwitch != null && _pendingSwitch.Target == target)
-            {
-                _pendingSwitch.Waiters.Add(completion);
-                return;
-            }
-            if (_pendingSwitch == null && _state.Language == target)
-            {
-                completion.TrySetResult(true);
-                return;
-            }
-            StartSwitch(target, completion);
-        }
-
-        private void OnReceived(TableReceiver receiver)
-        {
-            if (_host.IsHostThread)
-            {
-                ProcessReceived(receiver);
-                return;
-            }
-            _hostActions.Enqueue(() => ProcessReceived(receiver));
-            RequestUpdate();
-        }
-
-        private void ProcessReceived(TableReceiver receiver)
-        {
-            if (IsDisposed)
-            {
-                return;
-            }
-            if (receiver.Request.IsCatalog)
-            {
-                ProcessCatalog(receiver);
-                return;
-            }
-            LanguageSwitch languageSwitch = (LanguageSwitch)receiver.Context;
-            TableRequest request = receiver.Request;
-            bool isSource = request.Language == _catalog.SourceLanguage.Key;
-            if (!receiver.HasData)
-            {
-                Report(isSource ? ReportSeverity.Error : ReportSeverity.Warning, $"Couldn't load {request}: {receiver.FailureReason}");
-            }
-            else if (!CompiledTable.TryRead(receiver.Data.Span, out CompiledTable table, out string error))
-            {
-                Report(isSource ? ReportSeverity.Error : ReportSeverity.Warning, $"Couldn't read {request}: {error}");
-            }
-            else if (table.CatalogHash != CatalogKey.Hash || table.TableHash != request.Table.Hash || table.LanguageHash != request.Language.Hash)
-            {
-                Report(ReportSeverity.Error, $"The data delivered for {request} was compiled for another catalog, table or language; reimport or rebuild it.");
-            }
-            else
-            {
-                languageSwitch.Loaded[(request.Table.Hash, request.Language.Hash)] = table;
-            }
-            languageSwitch.Outstanding--;
-            TryApply(languageSwitch);
-        }
-
-        private void ProcessCatalog(TableReceiver receiver)
-        {
-            if (!receiver.HasData)
-            {
-                Report(ReportSeverity.Error, $"Couldn't load {receiver.Request}: {receiver.FailureReason}");
-                FailInitialization();
-                return;
-            }
-            if (!CompiledCatalog.TryRead(receiver.Data.Span, out CatalogInfo catalog, out string error))
-            {
-                Report(ReportSeverity.Error, $"Couldn't read {receiver.Request}: {error}");
-                FailInitialization();
-                return;
-            }
-            if (catalog.Key != CatalogKey)
-            {
-                Report(ReportSeverity.Error, $"A table source delivered the catalog '{catalog.Key.Name}' when asked for '{CatalogKey.Name}'.");
-                FailInitialization();
-                return;
-            }
-            _catalog = catalog;
-            Volatile.Write(ref _publishedCatalog, catalog);
-
-            LanguageInfo start = catalog.SourceLanguage;
-            if (!_startingLanguage.IsEmpty)
-            {
-                if (catalog.TryGetLanguage(_startingLanguage, out LanguageInfo chosen))
-                {
-                    start = chosen;
-                }
-                else
-                {
-                    Report(ReportSeverity.Warning, $"'{_startingLanguage.Name}' is not a language of the catalog '{CatalogKey.Name}', so it starts in {start.Name}.");
-                }
-            }
-            TaskCompletionSource<bool> initialization;
-            lock (_lockObject)
-            {
-                initialization = _initialization;
-            }
-            StartSwitch(start, initialization);
-        }
-
-        /// <summary>
-        /// Starts loading the tables of <paramref name="target"/> and every language it falls back through, reusing the
-        /// tables already loaded. A switch still loading is replaced, and its waiters move to this one.
-        /// </summary>
-        private void StartSwitch(LanguageInfo target, TaskCompletionSource<bool> waiter)
-        {
-            LanguageSwitch previous = _pendingSwitch;
-            LanguageSwitch languageSwitch = new(target, _catalog.GetFallbackChain(target));
-            if (waiter != null)
-            {
-                languageSwitch.Waiters.Add(waiter);
-            }
-            languageSwitch.Waiters.AddRange(_initialWaiters);
-            _initialWaiters.Clear();
-            if (previous != null)
-            {
-                previous.IsSuperseded = true;
-                languageSwitch.Waiters.AddRange(previous.Waiters);
-                previous.Waiters.Clear();
-            }
-            _pendingSwitch = languageSwitch;
-            RaiseLanguageEvent(LanguageChanging, target);
-
-            // One extra outstanding count is held while the requests go out, so that sources answering synchronously
-            // can't apply the switch before the last request is sent.
-            languageSwitch.Outstanding = 1;
-            IReadOnlyList<TableInfo> tables = _catalog.Tables;
-            for (int t = 0; t < tables.Count; t++)
-            {
-                TableInfo table = tables[t];
-                if (table.Loading != TableLoading.Preload)
-                {
-                    continue;
-                }
-                for (int l = 0; l < languageSwitch.Chain.Count; l++)
-                {
-                    LanguageInfo language = languageSwitch.Chain[l];
-                    (ulong Table, ulong Language) pair = (table.Key.Hash, language.Key.Hash);
-                    if (_loadedTables.TryGetValue(pair, out CompiledTable loaded) ||
-                        (previous != null && previous.Loaded.TryGetValue(pair, out loaded)))
-                    {
-                        languageSwitch.Loaded[pair] = loaded;
-                        continue;
-                    }
-                    TableRequest request = TableRequest.ForTable(CatalogKey, table, language.Key);
-                    languageSwitch.Outstanding++;
-                    if (!TryLoad(in request, new TableReceiver(request, _onReceived, languageSwitch)))
-                    {
-                        languageSwitch.Outstanding--;
-                        // A translation may simply not exist yet; the source language always has to.
-                        if (language == _catalog.SourceLanguage)
-                        {
-                            Report(ReportSeverity.Error, $"No table source has {request}, the language every other language falls back to.");
-                        }
-                    }
-                }
-            }
-            languageSwitch.Outstanding--;
-            TryApply(languageSwitch);
-        }
-
-        /// <summary>
-        /// Applies a switch once every load it waits for is answered: publishes the new state in one step, then
-        /// refreshes every binding, raises <see cref="LanguageChanged"/> and completes the waiting tasks.
-        /// </summary>
-        private void TryApply(LanguageSwitch languageSwitch)
-        {
-            if (languageSwitch.Outstanding > 0 || languageSwitch.IsSuperseded || IsDisposed)
-            {
-                return;
-            }
-            IReadOnlyList<TableInfo> tables = _catalog.Tables;
-            IReadOnlyList<LanguageInfo> chain = languageSwitch.Chain;
-            Dictionary<ulong, CompiledTable[]> stateTables = new(tables.Count);
-            for (int t = 0; t < tables.Count; t++)
-            {
-                TableInfo table = tables[t];
-                if (table.Loading != TableLoading.Preload)
-                {
-                    continue;
-                }
-                CompiledTable[] perLanguage = new CompiledTable[chain.Count];
-                for (int l = 0; l < chain.Count; l++)
-                {
-                    languageSwitch.Loaded.TryGetValue((table.Key.Hash, chain[l].Key.Hash), out perLanguage[l]);
-                }
-                stateTables.Add(table.Key.Hash, perLanguage);
-            }
-
-            // The one step every lookup observes. Tables of languages the new chain doesn't use are released with the
-            // old dictionary.
-            LanguageFormat[] formats = new LanguageFormat[chain.Count];
-            for (int l = 0; l < chain.Count; l++)
-            {
-                formats[l] = _catalog.GetFormat(chain[l]);
-            }
-            LocalizerState state = new(_state.Version + 1, languageSwitch.Target, chain, formats, stateTables);
-            Volatile.Write(ref _state, state);
-            _loadedTables = languageSwitch.Loaded;
-            _pendingSwitch = null;
-
-            _bindings.RefreshAll();
-            RaiseLanguageEvent(LanguageChanged, languageSwitch.Target);
-            for (int i = 0; i < languageSwitch.Waiters.Count; i++)
-            {
-                languageSwitch.Waiters[i].TrySetResult(true);
-            }
-            languageSwitch.Waiters.Clear();
-        }
-
-        private bool TryLoad(in TableRequest request, TableReceiver receiver)
-        {
-            IReadOnlyList<ITableSource> sources = _host.TableSources;
-            if (sources == null)
-            {
-                return false;
-            }
-            for (int i = 0; i < sources.Count; i++)
-            {
-                ITableSource source = sources[i];
-                if (source == null)
-                {
-                    continue;
-                }
-                try
-                {
-                    if (source.TryLoad(in request, receiver))
-                    {
-                        return true;
-                    }
-                }
-                catch (Exception exception)
-                {
-                    Report(ReportSeverity.Error, $"The table source {source.GetType().Name} threw while loading {request}: {exception}");
-                    // A source that answered before throwing still answered; the next source must not answer again.
-                    if (receiver.IsCompleted)
-                    {
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        private void FailInitialization()
-        {
-            TaskCompletionSource<bool> initialization;
-            lock (_lockObject)
-            {
-                initialization = _initialization;
-                // Clearing it lets the next call to InitializeAsync try again.
-                _initialization = null;
-            }
-            initialization?.TrySetResult(false);
-            for (int i = 0; i < _initialWaiters.Count; i++)
-            {
-                _initialWaiters[i].TrySetResult(false);
-            }
-            _initialWaiters.Clear();
-        }
-
-        private void ReleaseHostState()
-        {
-            if (_pendingSwitch != null)
-            {
-                _pendingSwitch.IsSuperseded = true;
-                for (int i = 0; i < _pendingSwitch.Waiters.Count; i++)
-                {
-                    _pendingSwitch.Waiters[i].TrySetResult(false);
-                }
-                _pendingSwitch = null;
-            }
-            for (int i = 0; i < _initialWaiters.Count; i++)
-            {
-                _initialWaiters[i].TrySetResult(false);
-            }
-            _initialWaiters.Clear();
-            _loadedTables = new Dictionary<(ulong Table, ulong Language), CompiledTable>();
-            _catalog = null;
-            Volatile.Write(ref _publishedCatalog, null);
-        }
-
-        private void RaiseLanguageEvent(Action<LanguageInfo> handlers, LanguageInfo language)
-        {
-            if (handlers == null)
-            {
-                return;
-            }
-            Delegate[] invocationList = handlers.GetInvocationList();
-            for (int i = 0; i < invocationList.Length; i++)
-            {
-                try
-                {
-                    ((Action<LanguageInfo>)invocationList[i])(language);
-                }
-                catch (Exception exception)
-                {
-                    // One failing handler must not keep the others from hearing about the switch.
-                    Report(ReportSeverity.Error, $"A language change handler threw: {exception}");
-                }
-            }
-        }
-
         // Messages.
 
-        /// <summary>Returns the text of a message: formatted when its entry has arguments, plain text when it has none.</summary>
-        private string Format(LocalizerState state, in EntryMessage message, bool isReportingEmptyKey)
+        /// <summary>
+        /// Returns the text of a message: formatted when its entry has arguments, plain text when it has none. For a
+        /// binding, returns null while the message's on-demand table loads, so the binding keeps its text.
+        /// </summary>
+        private string Format(LocalizerState state, in EntryMessage message, bool isForBinding)
         {
             EntryKey key = message.Key;
             if (key.IsEmpty)
             {
-                if (isReportingEmptyKey)
+                if (!isForBinding)
                 {
                     ReportEmptyKey();
                 }
@@ -844,7 +571,9 @@ namespace reromanlee.ReactiveLocalizer
             }
             if (!state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out int languageIndex))
             {
-                return GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
+                return isForBinding && IsAwaitingTable(state, key.Table.Hash)
+                    ? null
+                    : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
             }
             if (!table.TryGetMessage(index, out int start))
             {
@@ -941,17 +670,39 @@ namespace reromanlee.ReactiveLocalizer
 
         // Reports.
 
+        /// <summary>
+        /// Returns what a read shows for an entry it didn't find: the <c>[Table.Key]</c> marker for a key that exists
+        /// nowhere, reported once, or empty text for an on-demand table that isn't loaded, reported once per table.
+        /// </summary>
         private string GetMissingMarker(LocalizerState state, ReadOnlySpan<char> tableName, ReadOnlySpan<char> entryName, ulong tableHash, ulong entryHash)
         {
+            if (IsAwaitingTable(state, tableHash))
+            {
+                if (_reportedProblems.TryAdd(tableHash, 0, 6))
+                {
+                    Report(ReportSeverity.Warning, $"'{tableName.ToString()}.{entryName.ToString()}' was read while its table, which loads on demand, wasn't loaded, so the read returned empty text. Hold the table with HoldTable and await WhenLoaded first, or bind the text so it arrives on its own.");
+                }
+                return string.Empty;
+            }
             string marker = _missingKeys.GetMarker(tableName, entryName, tableHash, entryHash, out bool isNew);
             if (isNew)
             {
-                string reason = state.HasTable(tableHash)
-                    ? $"the table '{tableName.ToString()}' has no entry '{entryName.ToString()}' in any of its languages"
-                    : $"the catalog '{CatalogKey.Name}' has no table '{tableName.ToString()}'";
+                string reason = !state.TryGetLayers(tableHash, out TableLayers layers)
+                    ? $"the catalog '{CatalogKey.Name}' has no table '{tableName.ToString()}'"
+                    : layers.Count == 0
+                        ? $"the table '{tableName.ToString()}' couldn't be loaded in any language"
+                        : $"the table '{tableName.ToString()}' has no entry '{entryName.ToString()}' in any of its languages";
                 Report(ReportSeverity.Error, $"{marker} is shown because {reason}. Each missing key is reported once.");
             }
             return marker;
+        }
+
+        private void ReportUnknownTable(TableKey table)
+        {
+            if (_reportedProblems.TryAdd(table.Hash, 0, 7))
+            {
+                Report(ReportSeverity.Error, $"The catalog '{CatalogKey.Name}' has no table '{table.Name}' to hold.");
+            }
         }
 
         private void ReportEarlyRead()

@@ -12,7 +12,8 @@ namespace reromanlee.ReactiveLocalizer.Internal
     /// so a callback may bind, release or even switch the language without deadlocking. A slot's generation changes
     /// whenever it is released, which turns a stale or copied handle into a harmless no-op. The arguments of message
     /// bindings live in pooled holders that only the host thread recycles, so a binding released from another thread
-    /// can never change the message the host thread is formatting.
+    /// can never change the message the host thread is formatting. Every binding holds the table of its entry, so a
+    /// table loaded on demand stays loaded while anything shows its text.
     /// </remarks>
     internal sealed class BindingRegistry
     {
@@ -24,6 +25,10 @@ namespace reromanlee.ReactiveLocalizer.Internal
         private int _freeHead = -1;
         private int _activeCount;
         private bool _isRefreshing;
+
+        // Host thread only: the buffers character bindings' messages are formatted into, one per callback nesting level.
+        private char[][] _characterBuffers = new char[2][];
+        private int _characterDepth;
 
         // Holders ready to take a message, and holders released since the host thread last recycled them.
         private BoundMessage _freeMessages;
@@ -37,22 +42,27 @@ namespace reromanlee.ReactiveLocalizer.Internal
         /// <summary>How many bindings are active.</summary>
         public int ActiveCount => Volatile.Read(ref _activeCount);
 
-        public void Add(in EntryKey key, object target, Delegate apply, BindingInvoker invoker, out int index, out int generation)
+        /// <summary>Adds a binding of a key, which receives text through <paramref name="invoker"/>, or characters through <paramref name="characterInvoker"/>.</summary>
+        public void Add(in EntryKey key, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker, out int index, out int generation)
         {
+            // Held before the binding exists, so a table loading within the call can't refresh it before its first text.
+            _localizer.AcquireTable(key.Table);
             lock (_lockObject)
             {
-                index = AddSlot(in key, target, apply, invoker, null);
+                index = AddSlot(in key, target, apply, invoker, characterInvoker, null);
                 generation = _slots[index].Generation;
             }
         }
 
-        public void Add(in EntryMessage message, object target, Delegate apply, BindingInvoker invoker, out int index, out int generation)
+        /// <summary>Adds a binding of a message, which receives text through <paramref name="invoker"/>, or characters through <paramref name="characterInvoker"/>.</summary>
+        public void Add(in EntryMessage message, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker, out int index, out int generation)
         {
+            _localizer.AcquireTable(message.Key.Table);
             lock (_lockObject)
             {
                 BoundMessage bound = RentMessage();
                 bound.Value = message;
-                index = AddSlot(message.Key, target, apply, invoker, bound);
+                index = AddSlot(message.Key, target, apply, invoker, characterInvoker, bound);
                 generation = _slots[index].Generation;
             }
         }
@@ -60,6 +70,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
         /// <summary>Releases a binding. Returns false for a handle that is stale, copied after release, or never valid.</summary>
         public bool Release(int index, int generation)
         {
+            ulong tableHash;
             lock (_lockObject)
             {
                 if ((uint)index >= (uint)_highWater)
@@ -71,9 +82,11 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 {
                     return false;
                 }
+                tableHash = slot.Key.Table.Hash;
                 ReleaseSlot(index);
-                return true;
             }
+            _localizer.ReleaseTable(tableHash);
+            return true;
         }
 
         public bool IsActive(int index, int generation)
@@ -116,12 +129,24 @@ namespace reromanlee.ReactiveLocalizer.Internal
                     return;
                 }
                 pending = new Pending(index, in _slots[index]);
+                _slots[index].HasText = true;
             }
             Invoke(in pending);
         }
 
         /// <summary>Applies the current text to every active binding, in the order they were added. Host thread only.</summary>
         public void RefreshAll()
+        {
+            Refresh(0, true);
+        }
+
+        /// <summary>Applies the current text to every active binding of one table, as when it arrives. Host thread only.</summary>
+        public void RefreshTable(ulong tableHash)
+        {
+            Refresh(tableHash, false);
+        }
+
+        private void Refresh(ulong tableHash, bool isEveryTable)
         {
             Pending[] buffer;
             int count = 0;
@@ -133,9 +158,11 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 buffer = _isRefreshing ? new Pending[Math.Max(_activeCount, 1)] : EnsureRefreshBuffer(_activeCount);
                 for (int i = 0; i < _highWater; i++)
                 {
-                    if (_slots[i].IsActive)
+                    ref Slot slot = ref _slots[i];
+                    if (slot.IsActive && (isEveryTable || slot.Key.Table.Hash == tableHash))
                     {
-                        buffer[count] = new Pending(i, in _slots[i]);
+                        buffer[count] = new Pending(i, in slot);
+                        slot.HasText = true;
                         count++;
                     }
                 }
@@ -180,7 +207,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
             }
         }
 
-        private int AddSlot(in EntryKey key, object target, Delegate apply, BindingInvoker invoker, BoundMessage message)
+        private int AddSlot(in EntryKey key, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker, BoundMessage message)
         {
             int index;
             if (_freeHead >= 0)
@@ -199,11 +226,13 @@ namespace reromanlee.ReactiveLocalizer.Internal
             }
             ref Slot slot = ref _slots[index];
             slot.IsActive = true;
+            slot.HasText = false;
             slot.NextFree = -1;
             slot.Key = key;
             slot.Target = target;
             slot.Apply = apply;
             slot.Invoker = invoker;
+            slot.CharacterInvoker = characterInvoker;
             slot.Message = message;
             _activeCount++;
             return index;
@@ -218,6 +247,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
             slot.Target = null;
             slot.Apply = null;
             slot.Invoker = null;
+            slot.CharacterInvoker = null;
             if (slot.Message != null)
             {
                 // The host thread may be formatting this message right now; it recycles the holder once it isn't.
@@ -232,9 +262,10 @@ namespace reromanlee.ReactiveLocalizer.Internal
 
         private void SetMessageOnHost(int index, int generation, in EntryMessage message)
         {
+            ulong previousTable;
             lock (_lockObject)
             {
-                if ((uint)index >= (uint)_highWater || !_slots[index].IsActive || _slots[index].Generation != generation)
+                if (!IsActiveLocked(index, generation))
                 {
                     return;
                 }
@@ -243,12 +274,39 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 {
                     return;
                 }
+                previousTable = slot.Key.Table.Hash;
+            }
+            // A message from another table holds that table instead, outside the lock, as holding may load it.
+            bool isOtherTable = previousTable != message.Key.Table.Hash;
+            if (isOtherTable)
+            {
+                _localizer.AcquireTable(message.Key.Table);
+            }
+            lock (_lockObject)
+            {
+                if (!IsActiveLocked(index, generation))
+                {
+                    // Released meanwhile, along with what it held.
+                    if (isOtherTable)
+                    {
+                        _localizer.ReleaseTable(message.Key.Table.Hash);
+                    }
+                    return;
+                }
+                ref Slot slot = ref _slots[index];
                 slot.Message ??= RentMessage();
                 slot.Message.Value = message;
                 slot.Key = message.Key;
             }
+            if (isOtherTable)
+            {
+                _localizer.ReleaseTable(previousTable);
+            }
             Apply(index, generation);
         }
+
+        private bool IsActiveLocked(int index, int generation) =>
+            (uint)index < (uint)_highWater && _slots[index].IsActive && _slots[index].Generation == generation;
 
         private BoundMessage RentMessage()
         {
@@ -285,9 +343,23 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 }
                 return;
             }
+            if (pending.CharacterInvoker != null)
+            {
+                InvokeWithCharacters(in pending);
+                return;
+            }
             string text = pending.Message != null
                 ? _localizer.ResolveBindingText(in pending.Message.Value)
                 : _localizer.ResolveBindingText(pending.Key);
+            if (text == null)
+            {
+                // Its table is still loading: the binding keeps what it shows, which is nothing before its first text.
+                if (pending.HadText)
+                {
+                    return;
+                }
+                text = string.Empty;
+            }
             try
             {
                 pending.Invoker(pending.Target, pending.Apply, text);
@@ -296,6 +368,43 @@ namespace reromanlee.ReactiveLocalizer.Internal
             {
                 // One failing callback must not stop the others from receiving their text.
                 _localizer.ReportBindingFailure(pending.Key, pending.Target, exception);
+            }
+        }
+
+        private void InvokeWithCharacters(in Pending pending)
+        {
+            // A callback that makes other bindings update, as by switching the language, formats theirs one level deeper,
+            // so the characters it was given stay intact until it returns.
+            int depth = _characterDepth;
+            if (depth == _characterBuffers.Length)
+            {
+                Array.Resize(ref _characterBuffers, depth * 2);
+            }
+            char[] buffer = _characterBuffers[depth] ??= new char[256];
+            bool isResolved = pending.Message != null
+                ? _localizer.TryResolveBindingCharacters(in pending.Message.Value, ref buffer, out ReadOnlyMemory<char> characters)
+                : _localizer.TryResolveBindingCharacters(pending.Key, ref buffer, out characters);
+            _characterBuffers[depth] = buffer;
+            if (!isResolved)
+            {
+                if (pending.HadText)
+                {
+                    return;
+                }
+                characters = ReadOnlyMemory<char>.Empty;
+            }
+            _characterDepth++;
+            try
+            {
+                pending.CharacterInvoker(pending.Target, pending.Apply, characters);
+            }
+            catch (Exception exception)
+            {
+                _localizer.ReportBindingFailure(pending.Key, pending.Target, exception);
+            }
+            finally
+            {
+                _characterDepth--;
             }
         }
 
@@ -319,11 +428,14 @@ namespace reromanlee.ReactiveLocalizer.Internal
         {
             public int Generation;
             public bool IsActive;
+            // Whether the binding received a text, which it then keeps while its table loads.
+            public bool HasText;
             public int NextFree;
             public EntryKey Key;
             public object Target;
             public Delegate Apply;
             public BindingInvoker Invoker;
+            public CharacterInvoker CharacterInvoker;
             public BoundMessage Message;
         }
 
@@ -337,7 +449,9 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 Target = slot.Target;
                 Apply = slot.Apply;
                 Invoker = slot.Invoker;
+                CharacterInvoker = slot.CharacterInvoker;
                 Message = slot.Message;
+                HadText = slot.HasText;
             }
 
             public int Index { get; }
@@ -352,7 +466,11 @@ namespace reromanlee.ReactiveLocalizer.Internal
 
             public BindingInvoker Invoker { get; }
 
+            public CharacterInvoker CharacterInvoker { get; }
+
             public BoundMessage Message { get; }
+
+            public bool HadText { get; }
         }
     }
 }

@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using reromanlee.ReactiveLocalizer.Authoring;
 using reromanlee.ReactiveLocalizer.Editor;
+using reromanlee.ReactiveLocalizer.Tables;
 using reromanlee.ReactiveLocalizer.Unity;
 using System.Collections.Generic;
 using System.IO;
@@ -146,6 +147,55 @@ namespace reromanlee.ReactiveLocalizer.Tests
             localizer.SetLanguageAsync(new LanguageKey("Russian"));
             localizer.InitializeAsync();
             Assert.That(localizer.Get(new EntryMessage(new EntryKey("Shop", "Balance"), new MessageArgument("money", 5))), Is.EqualTo("You have 5 coins."));
+        }
+
+        [Test]
+        public void CompleteTranslation_IsMarkedCompleteForTheCatalogsKeys()
+        {
+            File.WriteAllText($"{Folder}/Shop.Russian.lang", "Purchase = Kupit\nTitle = Magazin\n" + RussianBalance);
+            AssetDatabase.ImportAsset($"{Folder}/Shop.Russian.lang", ImportAssetOptions.ForceSynchronousImport);
+            CatalogIndex.Invalidate();
+            IndexedCatalog catalog = CatalogIndex.Find(new CatalogKey("Game"));
+            catalog.Info.TryGetTable(new TableKey("Shop"), out TableInfo shop);
+
+            Assert.That(Read($"{Folder}/Shop.Russian.lang").IsComplete(shop.KeysHash), Is.True);
+            Assert.That(Read($"{Folder}/Shop.English.lang").IsComplete(shop.KeysHash), Is.True);
+            File.WriteAllText($"{Folder}/Shop.Russian.lang", "Purchase = Kupit\n");
+            AssetDatabase.ImportAsset($"{Folder}/Shop.Russian.lang", ImportAssetOptions.ForceSynchronousImport);
+            Assert.That(Read($"{Folder}/Shop.Russian.lang").IsComplete(shop.KeysHash), Is.False);
+        }
+
+        [Test]
+        public void Pack_PutsStreamingTablesInTheirOwnFolderWithAList()
+        {
+            File.WriteAllText($"{Folder}/Feature/Dialogue.English.lang", "@delivery Streaming\n\nLine1 = Hello\n");
+            File.WriteAllText($"{Folder}/Feature/Dialogue.Russian.lang", "Line1 = Privet\n");
+            CatalogLayout.Refresh();
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            CatalogIndex.Invalidate();
+            string output = Path.Combine(Path.GetTempPath(), "ReactiveLocalizerPack", System.Guid.NewGuid().ToString("N"));
+            try
+            {
+                TableBuildStep.Pack($"{output}/Resources", $"{output}/Streaming");
+
+                Assert.That(File.Exists($"{output}/Resources/Game/catalog.bytes"), Is.True);
+                Assert.That(File.Exists($"{output}/Resources/Game/Russian/Shop.bytes"), Is.True);
+                Assert.That(File.Exists($"{output}/Resources/Game/English/Dialogue.bytes"), Is.False);
+                Assert.That(File.Exists($"{output}/Streaming/Game/English/Dialogue.bytes"), Is.True);
+                Assert.That(File.Exists($"{output}/Streaming/Game/Russian/Dialogue.bytes"), Is.True);
+                Assert.That(File.ReadAllText($"{output}/Resources/Game/streaming.bytes"), Is.EqualTo("English/Dialogue\nRussian/Dialogue\n"));
+            }
+            finally
+            {
+                Directory.Delete(output, true);
+            }
+        }
+
+        private static CompiledTable Read(string path)
+        {
+            TableAsset asset = AssetDatabase.LoadAssetAtPath<TableAsset>(path);
+            Assert.That(CompiledTable.TryRead(asset.Data.Span, out CompiledTable table, out string error), Is.True, error);
+            return table;
         }
 
         [TestCase("Title Label (1)", "Title")]

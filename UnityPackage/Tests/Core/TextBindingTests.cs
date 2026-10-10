@@ -92,8 +92,7 @@ namespace reromanlee.ReactiveLocalizer.Tests
 
             localizer.Bind(Purchase, label, static (target, text) => target.Add(text));
             localizer.InitializeAsync();
-            source.DeliverPending();
-            source.DeliverPending();
+            source.DeliverAll();
 
             Assert.That(label, Is.EqualTo(new[] { string.Empty, "Buy" }));
             Assert.That(host.Reports, Is.Empty);
