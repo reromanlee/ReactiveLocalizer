@@ -168,8 +168,7 @@ namespace reromanlee.ReactiveLocalizer.Tests
 
             Task switching = localizer.SetLanguageAsync(Russian);
             Task initialization = localizer.InitializeAsync();
-            source.DeliverPending();
-            source.DeliverPending();
+            source.DeliverAll();
 
             Assert.That(initialization.IsCompleted, Is.True);
             Assert.That(switching.IsCompleted, Is.True);
@@ -223,7 +222,7 @@ namespace reromanlee.ReactiveLocalizer.Tests
 
             Task toRussian = localizer.SetLanguageAsync(Russian);
             Task toPirate = localizer.SetLanguageAsync(Pirate);
-            source.DeliverPending();
+            source.DeliverAll();
 
             Assert.That(toRussian.IsCompleted, Is.True);
             Assert.That(toPirate.IsCompleted, Is.True);

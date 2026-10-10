@@ -33,6 +33,8 @@ namespace reromanlee.ReactiveLocalizer
         private readonly ConcurrentQueue<Action> _hostActions = new();
         private readonly Action _update;
         private readonly Action<TableReceiver> _onReceived;
+        private readonly Action<ChainLoad> _onSwitchTableLoaded;
+        private readonly Func<ulong, ulong, bool> _isLoadedTableNeeded;
         private readonly object _lockObject = new();
 
         // Published for every thread: lookups read the state, and the catalog is shown once it is loaded.
@@ -42,7 +44,7 @@ namespace reromanlee.ReactiveLocalizer
 
         // Host thread only.
         private readonly List<TaskCompletionSource<bool>> _initialWaiters = new();
-        private Dictionary<(ulong Table, ulong Language), CompiledTable> _loadedTables = new();
+        private readonly TableLoader _loader;
         private CatalogInfo _catalog;
         private LanguageSwitch _pendingSwitch;
         private LanguageKey _startingLanguage;
@@ -69,6 +71,9 @@ namespace reromanlee.ReactiveLocalizer
             _bindings = new BindingRegistry(this);
             _update = Update;
             _onReceived = OnReceived;
+            _onSwitchTableLoaded = OnSwitchTableLoaded;
+            _isLoadedTableNeeded = IsLoadedTableNeeded;
+            _loader = new TableLoader(host, _onReceived, (severity, message) => Report(severity, message));
         }
 
         /// <inheritdoc/>
@@ -497,7 +502,7 @@ namespace reromanlee.ReactiveLocalizer
                 return;
             }
             TableRequest request = TableRequest.ForCatalog(CatalogKey);
-            if (!TryLoad(in request, new TableReceiver(request, _onReceived, null)))
+            if (!TryLoadCatalog(in request, new TableReceiver(request, _onReceived, null)))
             {
                 Report(ReportSeverity.Error, $"No table source has {request}. In Unity, check that the catalog exists and that the build includes it.");
                 FailInitialization();
@@ -559,27 +564,7 @@ namespace reromanlee.ReactiveLocalizer
                 ProcessCatalog(receiver);
                 return;
             }
-            LanguageSwitch languageSwitch = (LanguageSwitch)receiver.Context;
-            TableRequest request = receiver.Request;
-            bool isSource = request.Language == _catalog.SourceLanguage.Key;
-            if (!receiver.HasData)
-            {
-                Report(isSource ? ReportSeverity.Error : ReportSeverity.Warning, $"Couldn't load {request}: {receiver.FailureReason}");
-            }
-            else if (!CompiledTable.TryRead(receiver.Data.Span, out CompiledTable table, out string error))
-            {
-                Report(isSource ? ReportSeverity.Error : ReportSeverity.Warning, $"Couldn't read {request}: {error}");
-            }
-            else if (table.CatalogHash != CatalogKey.Hash || table.TableHash != request.Table.Hash || table.LanguageHash != request.Language.Hash)
-            {
-                Report(ReportSeverity.Error, $"The data delivered for {request} was compiled for another catalog, table or language; reimport or rebuild it.");
-            }
-            else
-            {
-                languageSwitch.Loaded[(request.Table.Hash, request.Language.Hash)] = table;
-            }
-            languageSwitch.Outstanding--;
-            TryApply(languageSwitch);
+            _loader.OnReceived(receiver);
         }
 
         private void ProcessCatalog(TableReceiver receiver)
@@ -603,6 +588,7 @@ namespace reromanlee.ReactiveLocalizer
                 return;
             }
             _catalog = catalog;
+            _loader.Catalog = catalog;
             Volatile.Write(ref _publishedCatalog, catalog);
 
             LanguageInfo start = catalog.SourceLanguage;
@@ -626,8 +612,9 @@ namespace reromanlee.ReactiveLocalizer
         }
 
         /// <summary>
-        /// Starts loading the tables of <paramref name="target"/> and every language it falls back through, reusing the
-        /// tables already loaded. A switch still loading is replaced, and its waiters move to this one.
+        /// Starts loading every table the localizer keeps in <paramref name="target"/>, along with the fallback
+        /// languages each table needs, reusing the tables already loaded. A switch still loading is replaced, and its
+        /// waiters move to this one.
         /// </summary>
         private void StartSwitch(LanguageInfo target, TaskCompletionSource<bool> waiter)
         {
@@ -641,53 +628,54 @@ namespace reromanlee.ReactiveLocalizer
             _initialWaiters.Clear();
             if (previous != null)
             {
-                previous.IsSuperseded = true;
+                previous.Supersede();
                 languageSwitch.Waiters.AddRange(previous.Waiters);
                 previous.Waiters.Clear();
             }
             _pendingSwitch = languageSwitch;
             RaiseLanguageEvent(LanguageChanging, target);
 
-            // One extra outstanding count is held while the requests go out, so that sources answering synchronously
-            // can't apply the switch before the last request is sent.
+            // One extra outstanding count is held while the loads start, so that sources answering synchronously
+            // can't apply the switch before the last load has started.
             languageSwitch.Outstanding = 1;
             IReadOnlyList<TableInfo> tables = _catalog.Tables;
             for (int t = 0; t < tables.Count; t++)
             {
-                TableInfo table = tables[t];
-                if (table.Loading != TableLoading.Preload)
+                if (IsKept(tables[t]))
                 {
-                    continue;
-                }
-                for (int l = 0; l < languageSwitch.Chain.Count; l++)
-                {
-                    LanguageInfo language = languageSwitch.Chain[l];
-                    (ulong Table, ulong Language) pair = (table.Key.Hash, language.Key.Hash);
-                    if (_loadedTables.TryGetValue(pair, out CompiledTable loaded) ||
-                        (previous != null && previous.Loaded.TryGetValue(pair, out loaded)))
-                    {
-                        languageSwitch.Loaded[pair] = loaded;
-                        continue;
-                    }
-                    TableRequest request = TableRequest.ForTable(CatalogKey, table, language.Key);
-                    languageSwitch.Outstanding++;
-                    if (!TryLoad(in request, new TableReceiver(request, _onReceived, languageSwitch)))
-                    {
-                        languageSwitch.Outstanding--;
-                        // A translation may simply not exist yet; the source language always has to.
-                        if (language == _catalog.SourceLanguage)
-                        {
-                            Report(ReportSeverity.Error, $"No table source has {request}, the language every other language falls back to.");
-                        }
-                    }
+                    AddToSwitch(languageSwitch, tables[t]);
                 }
             }
             languageSwitch.Outstanding--;
             TryApply(languageSwitch);
         }
 
+        private void AddToSwitch(LanguageSwitch languageSwitch, TableInfo table)
+        {
+            // One count for the load, and one held until it is registered, so a load done within the call can't apply
+            // the switch without it.
+            languageSwitch.Outstanding += 2;
+            languageSwitch.Loads[table.Key.Hash] = _loader.Load(table, languageSwitch.Chain, _onSwitchTableLoaded, languageSwitch);
+            languageSwitch.Outstanding--;
+            TryApply(languageSwitch);
+        }
+
+        private void OnSwitchTableLoaded(ChainLoad load)
+        {
+            LanguageSwitch languageSwitch = (LanguageSwitch)load.Owner;
+            if (languageSwitch.IsSuperseded)
+            {
+                return;
+            }
+            languageSwitch.Outstanding--;
+            TryApply(languageSwitch);
+        }
+
+        /// <summary>Whether the localizer keeps <paramref name="table"/> loaded in the current language.</summary>
+        private bool IsKept(TableInfo table) => table.Loading == TableLoading.Preload;
+
         /// <summary>
-        /// Applies a switch once every load it waits for is answered: publishes the new state in one step, then
+        /// Applies a switch once every load it waits for is done: publishes the new state in one step, then
         /// refreshes every binding, raises <see cref="LanguageChanged"/> and completes the waiting tasks.
         /// </summary>
         private void TryApply(LanguageSwitch languageSwitch)
@@ -696,26 +684,18 @@ namespace reromanlee.ReactiveLocalizer
             {
                 return;
             }
-            IReadOnlyList<TableInfo> tables = _catalog.Tables;
             IReadOnlyList<LanguageInfo> chain = languageSwitch.Chain;
-            Dictionary<ulong, CompiledTable[]> stateTables = new(tables.Count);
-            for (int t = 0; t < tables.Count; t++)
+            Dictionary<ulong, TableLayers> stateTables = new(languageSwitch.Loads.Count);
+            foreach (ChainLoad load in languageSwitch.Loads.Values)
             {
-                TableInfo table = tables[t];
-                if (table.Loading != TableLoading.Preload)
+                if (load.IsDone && IsKept(load.Table))
                 {
-                    continue;
+                    stateTables.Add(load.Table.Key.Hash, load.Result);
                 }
-                CompiledTable[] perLanguage = new CompiledTable[chain.Count];
-                for (int l = 0; l < chain.Count; l++)
-                {
-                    languageSwitch.Loaded.TryGetValue((table.Key.Hash, chain[l].Key.Hash), out perLanguage[l]);
-                }
-                stateTables.Add(table.Key.Hash, perLanguage);
             }
 
             // The one step every lookup observes. Tables of languages the new chain doesn't use are released with the
-            // old dictionary.
+            // old state, and dropped from the loader right after.
             LanguageFormat[] formats = new LanguageFormat[chain.Count];
             for (int l = 0; l < chain.Count; l++)
             {
@@ -723,8 +703,8 @@ namespace reromanlee.ReactiveLocalizer
             }
             LocalizerState state = new(_state.Version + 1, languageSwitch.Target, chain, formats, stateTables);
             Volatile.Write(ref _state, state);
-            _loadedTables = languageSwitch.Loaded;
             _pendingSwitch = null;
+            _loader.Prune(_isLoadedTableNeeded);
 
             _bindings.RefreshAll();
             RaiseLanguageEvent(LanguageChanged, languageSwitch.Target);
@@ -735,7 +715,38 @@ namespace reromanlee.ReactiveLocalizer
             languageSwitch.Waiters.Clear();
         }
 
-        private bool TryLoad(in TableRequest request, TableReceiver receiver)
+        /// <summary>
+        /// Whether a table the loader holds in a language is still needed: the localizer keeps the table, and either
+        /// the current state looked in that language for it, or the switch in progress may.
+        /// </summary>
+        private bool IsLoadedTableNeeded(ulong tableHash, ulong languageHash)
+        {
+            if (_catalog == null || !_catalog.TryGetTable(tableHash, out TableInfo table) || !IsKept(table))
+            {
+                return false;
+            }
+            if (_pendingSwitch != null && IndexOf(_pendingSwitch.Chain, languageHash) >= 0)
+            {
+                return true;
+            }
+            int index = IndexOf(_state.Chain, languageHash);
+            return index >= 0 && _state.TryGetLayers(tableHash, out TableLayers layers) && index < layers.ConsultedLanguageCount;
+        }
+
+        private static int IndexOf(IReadOnlyList<LanguageInfo> chain, ulong languageHash)
+        {
+            for (int i = 0; i < chain.Count; i++)
+            {
+                if (chain[i].Key.Hash == languageHash)
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        /// <summary>Asks the sources for the compiled catalog, in order, until one has it.</summary>
+        private bool TryLoadCatalog(in TableRequest request, TableReceiver receiver)
         {
             IReadOnlyList<ITableSource> sources = _host.TableSources;
             if (sources == null)
@@ -790,7 +801,7 @@ namespace reromanlee.ReactiveLocalizer
         {
             if (_pendingSwitch != null)
             {
-                _pendingSwitch.IsSuperseded = true;
+                _pendingSwitch.Supersede();
                 for (int i = 0; i < _pendingSwitch.Waiters.Count; i++)
                 {
                     _pendingSwitch.Waiters[i].TrySetResult(false);
@@ -802,7 +813,7 @@ namespace reromanlee.ReactiveLocalizer
                 _initialWaiters[i].TrySetResult(false);
             }
             _initialWaiters.Clear();
-            _loadedTables = new Dictionary<(ulong Table, ulong Language), CompiledTable>();
+            _loader.Clear();
             _catalog = null;
             Volatile.Write(ref _publishedCatalog, null);
         }
@@ -946,9 +957,11 @@ namespace reromanlee.ReactiveLocalizer
             string marker = _missingKeys.GetMarker(tableName, entryName, tableHash, entryHash, out bool isNew);
             if (isNew)
             {
-                string reason = state.HasTable(tableHash)
-                    ? $"the table '{tableName.ToString()}' has no entry '{entryName.ToString()}' in any of its languages"
-                    : $"the catalog '{CatalogKey.Name}' has no table '{tableName.ToString()}'";
+                string reason = !state.TryGetLayers(tableHash, out TableLayers layers)
+                    ? $"the catalog '{CatalogKey.Name}' has no table '{tableName.ToString()}'"
+                    : layers.Count == 0
+                        ? $"the table '{tableName.ToString()}' couldn't be loaded in any language"
+                        : $"the table '{tableName.ToString()}' has no entry '{entryName.ToString()}' in any of its languages";
                 Report(ReportSeverity.Error, $"{marker} is shown because {reason}. Each missing key is reported once.");
             }
             return marker;

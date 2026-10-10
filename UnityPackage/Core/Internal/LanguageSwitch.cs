@@ -1,4 +1,3 @@
-using reromanlee.ReactiveLocalizer.Tables;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -21,16 +20,26 @@ namespace reromanlee.ReactiveLocalizer.Internal
 
         public IReadOnlyList<LanguageInfo> Chain { get; }
 
-        /// <summary>The tables this switch has, keyed by table hash and language hash.</summary>
-        public Dictionary<(ulong Table, ulong Language), CompiledTable> Loaded { get; } = new();
+        /// <summary>The loads of the switch, one per table, by table hash.</summary>
+        public Dictionary<ulong, ChainLoad> Loads { get; } = new();
 
         /// <summary>Tasks to complete once the switch is applied, or once it is given up.</summary>
         public List<TaskCompletionSource<bool>> Waiters { get; } = new();
 
-        /// <summary>Loads not yet answered, plus one while requests are still being sent.</summary>
+        /// <summary>Loads not yet done, plus one while loads are still being started.</summary>
         public int Outstanding { get; set; }
 
         /// <summary>Whether a newer switch replaced this one, so its loads are no longer awaited.</summary>
-        public bool IsSuperseded { get; set; }
+        public bool IsSuperseded { get; private set; }
+
+        /// <summary>Gives the switch up: its loads stop, and nothing it loaded is applied.</summary>
+        public void Supersede()
+        {
+            IsSuperseded = true;
+            foreach (ChainLoad load in Loads.Values)
+            {
+                load.Cancel();
+            }
+        }
     }
 }

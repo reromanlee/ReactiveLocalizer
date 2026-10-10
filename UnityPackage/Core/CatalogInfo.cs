@@ -94,6 +94,9 @@ namespace reromanlee.ReactiveLocalizer
         /// <summary>Returns the table with <paramref name="key"/>.</summary>
         public bool TryGetTable(TableKey key, out TableInfo table) => _tables.TryGetValue(key.Hash, out table) && !key.IsEmpty;
 
+        /// <summary>Returns the table whose name hashes to <paramref name="tableHash"/>.</summary>
+        internal bool TryGetTable(ulong tableHash, out TableInfo table) => _tables.TryGetValue(tableHash, out table);
+
         /// <summary>
         /// Returns how <paramref name="language"/> formats messages: its plural rules and number symbols, from its
         /// culture, else inherited from its fallback, with its own symbols applied over either.
