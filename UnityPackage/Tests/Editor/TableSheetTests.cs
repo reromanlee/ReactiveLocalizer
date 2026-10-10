@@ -4,7 +4,9 @@ using reromanlee.ReactiveLocalizer.Editor;
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
+using UnityEngine;
 using UnityEngine.TestTools;
+using UnityEngine.UIElements;
 
 namespace reromanlee.ReactiveLocalizer.Tests
 {
@@ -108,6 +110,63 @@ namespace reromanlee.ReactiveLocalizer.Tests
             Assert.That(status.Missing, Is.EqualTo(1));
             Assert.That(status.Outdated, Is.EqualTo(1));
             Assert.That(status.Errors, Is.GreaterThanOrEqualTo(2));
+        }
+
+        [Test]
+        public void Views_ShowASheetWithItsPreview()
+        {
+            TableSheet sheet = new(_catalog, "Shop");
+            List<TableSheetRow> rows = new(sheet.Rows);
+            TableGrid grid = new();
+            TableSidebar sidebar = new();
+            TableDetail detail = new(new IgnoredEdits());
+
+            grid.Show(sheet.Languages, rows, new List<string> { "Russian" });
+            grid.Select("Welcome");
+            sidebar.Rebuild("Sheet", "Shop");
+            detail.Show(sheet, sheet.Find("Welcome"));
+            detail.Show(sheet, sheet.Find("Welcome"));
+            detail.Show(sheet, sheet.Find("Ghost"));
+
+            Assert.That(grid.SelectedRow?.Key, Is.EqualTo("Welcome"));
+            Assert.That(sidebar.SelectedCatalog?.Name, Is.EqualTo("Sheet"));
+            detail.Show(sheet, sheet.Find("Welcome"));
+            Assert.That(detail.Query<Label>().ToList().Exists(label => label.text.StartsWith("English:  Hello, name!")), Is.True);
+        }
+
+        private sealed class IgnoredEdits : ITableEditor
+        {
+            public void SetText(string key, int language, string text)
+            {
+            }
+
+            public void MarkCurrent(string key, int language)
+            {
+            }
+
+            public void RemoveTranslation(string key, int language)
+            {
+            }
+
+            public void SetContext(string key, string context)
+            {
+            }
+
+            public void SetMaximumLength(string key, string value)
+            {
+            }
+
+            public void Rename(string key, Rect activator)
+            {
+            }
+
+            public void Move(string key, Rect activator)
+            {
+            }
+
+            public void Delete(string key)
+            {
+            }
         }
     }
 }

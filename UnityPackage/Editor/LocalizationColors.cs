@@ -1,3 +1,4 @@
+using reromanlee.ReactiveLocalizer.Authoring;
 using UnityEditor;
 using UnityEngine;
 
@@ -17,5 +18,39 @@ namespace reromanlee.ReactiveLocalizer.Editor
 
         /// <summary>The outline of popups, which have no window frame of their own.</summary>
         public static Color Border => EditorGUIUtility.isProSkin ? new Color(0.1f, 0.1f, 0.1f) : new Color(0.55f, 0.55f, 0.55f);
+
+        /// <summary>The background of a table cell, tinted by how its entry stands; clear when all is well.</summary>
+        /// <param name="cell">The cell.</param>
+        /// <param name="hasSource">Whether the entry has source text, which makes a missing cell a missing translation.</param>
+        public static Color Tint(in TableSheetCell cell, bool hasSource)
+        {
+            if ((cell.Problems & TableSheetProblem.Error) != 0 || cell.State == TranslationState.Orphan)
+            {
+                return WithAlpha(Problem, 0.24f);
+            }
+            if ((cell.Problems & (TableSheetProblem.Warning | TableSheetProblem.OverLimit)) != 0 || cell.State == TranslationState.Outdated)
+            {
+                return WithAlpha(Warning, 0.22f);
+            }
+            if (cell.State == TranslationState.Unverified)
+            {
+                return WithAlpha(Warning, 0.08f);
+            }
+            return cell.State == TranslationState.Missing && hasSource ? WithAlpha(Muted, 0.14f) : Color.clear;
+        }
+
+        /// <summary>The color of a translation state's name, as the table window's detail shows it.</summary>
+        public static Color Of(TranslationState state)
+        {
+            return state switch
+            {
+                TranslationState.Orphan => Problem,
+                TranslationState.Outdated => Warning,
+                TranslationState.Unverified => Warning,
+                _ => Muted
+            };
+        }
+
+        private static Color WithAlpha(Color color, float alpha) => new(color.r, color.g, color.b, alpha);
     }
 }
