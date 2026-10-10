@@ -18,6 +18,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
         private readonly Dictionary<ulong, IndexedTable> _tables = new();
         private readonly List<IndexedTable> _tableList = new();
         private KeyResolver _resolver;
+        private List<EntrySearchItem> _searchItems;
 
         public IndexedCatalog(string path, string name)
         {
@@ -71,6 +72,32 @@ namespace reromanlee.ReactiveLocalizer.Editor
                     _resolver = new KeyResolver(sources);
                 }
                 return _resolver;
+            }
+        }
+
+        /// <summary>The catalog's entries with their source text, in natural order, as searches list them. Built on first use, once per index.</summary>
+        public IReadOnlyList<EntrySearchItem> SearchItems
+        {
+            get
+            {
+                if (_searchItems == null)
+                {
+                    List<IndexedTable> tables = new(_tableList);
+                    tables.Sort((left, right) => NaturalOrder.Instance.Compare(left.Name, right.Name));
+                    List<EntrySearchItem> items = new();
+                    for (int i = 0; i < tables.Count; i++)
+                    {
+                        IReadOnlyList<TableDocumentEntry> entries = tables[i].SourceDocument?.Entries;
+                        for (int e = 0; entries != null && e < entries.Count; e++)
+                        {
+                            items.Add(new EntrySearchItem(Name, tables[i].Name, entries[e].Key, entries[e].Value));
+                        }
+                    }
+                    // Canonical files are in natural order already, which leaves sorting to files written by hand.
+                    EntrySearch.Sort(items);
+                    _searchItems = items;
+                }
+                return _searchItems;
             }
         }
 

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
@@ -18,6 +19,9 @@ namespace reromanlee.ReactiveLocalizer.Editor
         /// <summary>Endings that describe a UI element rather than its role, left out of suggested keys.</summary>
         private static readonly string[] ElementSuffixes = { "Label", "Text", "Caption", "Str", "Txt", "TMP", "TextMeshPro" };
 
+        /// <summary>Field names that only say a field holds an entry, which add nothing to a key.</summary>
+        private static readonly string[] GenericFieldWords = { "Entry", "Key", "Reference", "Ref", "Localized", "Content", "Value", "Message", "String" };
+
         /// <summary>
         /// Suggests a key for text a GameObject shows, from the GameObject's name rather than the text: entries are
         /// named after their role. <c>Title Label (1)</c> suggests <c>Title</c>.
@@ -25,17 +29,39 @@ namespace reromanlee.ReactiveLocalizer.Editor
         public static string SuggestKey(string gameObjectName)
         {
             List<string> words = SplitWords(gameObjectName);
-            while (words.Count > 1 && IsElementSuffix(words[words.Count - 1]))
-            {
-                words.RemoveAt(words.Count - 1);
-            }
+            StripElementSuffixes(words);
             string key = JoinPascalCase(words);
             return NameRules.IsValid(key) ? key : "Entry";
         }
 
         /// <summary>
+        /// Suggests a key for the field named <paramref name="fieldName"/> of a component on a GameObject: the
+        /// GameObject's role, followed by the field's own role when it has one. <c>_description</c> on <c>Sword</c>
+        /// suggests <c>SwordDescription</c>, and <c>_entry</c> on <c>Title Label</c> suggests <c>Title</c>.
+        /// </summary>
+        public static string SuggestKey(string gameObjectName, string fieldName)
+        {
+            List<string> words = SplitWords(gameObjectName);
+            StripElementSuffixes(words);
+            string owner = JoinPascalCase(words);
+            List<string> fieldWords = SplitWords(fieldName);
+            StripElementSuffixes(fieldWords);
+            fieldWords.RemoveAll(IsGenericFieldWord);
+            string role = JoinPascalCase(fieldWords);
+            if (!NameRules.IsValid(owner))
+            {
+                return NameRules.IsValid(role) ? role : "Entry";
+            }
+            if (role.Length == 0 || owner.EndsWith(role, StringComparison.OrdinalIgnoreCase) || !NameRules.IsValid(owner + role))
+            {
+                return owner;
+            }
+            return owner + role;
+        }
+
+        /// <summary>
         /// Suggests the table for text shown by <paramref name="context"/>: the table named after the prefab being
-        /// edited, or else the object's scene, matching the convention of one table per owner.
+        /// edited or selected, or else the object's scene, matching the convention of one table per owner.
         /// </summary>
         public static string SuggestTable(GameObject context)
         {
@@ -44,6 +70,10 @@ namespace reromanlee.ReactiveLocalizer.Editor
             if (stage != null && context != null && stage.IsPartOfPrefabContents(context))
             {
                 owner = Path.GetFileNameWithoutExtension(stage.assetPath);
+            }
+            else if (context != null && PrefabUtility.IsPartOfPrefabAsset(context))
+            {
+                owner = Path.GetFileNameWithoutExtension(AssetDatabase.GetAssetPath(context));
             }
             else if (context != null && context.scene.IsValid())
             {
@@ -157,11 +187,22 @@ namespace reromanlee.ReactiveLocalizer.Editor
             return joined.ToString();
         }
 
-        private static bool IsElementSuffix(string word)
+        /// <summary>Removes the words ending a name that describe a UI element, keeping at least one word.</summary>
+        private static void StripElementSuffixes(List<string> words)
         {
-            for (int i = 0; i < ElementSuffixes.Length; i++)
+            while (words.Count > 1 && IsAnyOf(words[words.Count - 1], ElementSuffixes))
             {
-                if (string.Equals(word, ElementSuffixes[i], StringComparison.OrdinalIgnoreCase))
+                words.RemoveAt(words.Count - 1);
+            }
+        }
+
+        private static bool IsGenericFieldWord(string word) => IsAnyOf(word, GenericFieldWords) || IsAnyOf(word, ElementSuffixes);
+
+        private static bool IsAnyOf(string word, string[] names)
+        {
+            for (int i = 0; i < names.Length; i++)
+            {
+                if (string.Equals(word, names[i], StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
