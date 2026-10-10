@@ -415,6 +415,28 @@ namespace reromanlee.ReactiveLocalizer.Tests
         }
 
         [Test]
+        public void UndoingSomethingElse_LeavesFilesChangedElsewhereAlone()
+        {
+            Assert.That(EntryAuthoring.TryCreateEntry("Game", "Shop", "Refund", "Return it", out _, out string problem), Is.True, problem);
+            File.WriteAllText($"{Folder}/Shop.English.lang", "Purchase = Changed in a text editor\n");
+            EntryHolder holder = ScriptableObject.CreateInstance<EntryHolder>();
+            try
+            {
+                Undo.IncrementCurrentGroup();
+                Undo.RecordObject(holder, "Rename the holder");
+                holder.name = "Renamed";
+
+                Undo.PerformUndo();
+
+                Assert.That(File.ReadAllText($"{Folder}/Shop.English.lang"), Is.EqualTo("Purchase = Changed in a text editor\n"));
+            }
+            finally
+            {
+                Object.DestroyImmediate(holder);
+            }
+        }
+
+        [Test]
         public void TryCreateEntry_RejectsMissingCatalogsAndInvalidNames()
         {
             Assert.That(EntryAuthoring.TryCreateEntry("Nowhere", "Shop", "Refund", "Text", out _, out string missing), Is.False);
