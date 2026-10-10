@@ -327,6 +327,7 @@ Purchase [3fa2c1] = Купить
    2. Text edits never touch it, so text edits never cause a recompile.
    3. A result identical to the existing file is never rewritten.
    4. While a source text's message has errors, the file keeps its current members, so a typo in a text never breaks the code that calls it.
+   5. **Edits made with the editor's own tools wait until the editor loses focus.** That covers the table window and creating entries in the Inspector. Code needs the new keys only once someone switches to an IDE to write it, so working in the editor never triggers a recompile. Changes from outside the editor, such as version control or a text editor, regenerate right away. Code still pending when the editor closes is caught up the next time it starts.
 3. **Shape:**
 
    ```csharp
@@ -377,35 +378,40 @@ Purchase [3fa2c1] = Купить
 4. **Detail pane** for the selected entry: every language stacked vertically with full multi-line editors. This is where long paragraphs live. It also has:
    1. an ICU preview with editable sample values (for example, Russian with `1`, `2`, `5` and `21`);
    2. the attributes;
-   3. the outdated state, with *Show source change* and *Mark as current*.
-5. **Status tints** for missing, outdated, broken ICU, over maximum length and orphaned. Filters for *missing in X*, *outdated* and *errors*. Search covers keys, text and comments.
+   3. the outdated state, with *Show source change* and *Mark as current*. A fingerprint holds no text, so *Show source change* finds the source text a translation was made from in git. It searches the source file's recent history, following renames, and diffs that text against the current one word by word. Without git, or when no recent version matches, it says so.
+5. **Status tints** for missing, outdated, broken ICU, over maximum length and orphaned. Filters for *missing in X* or in any language, *outdated* (which includes translations without a fingerprint) and *problems*. Search covers keys, text in every language and comments. Problems are what compiling each file reports, mapped to the entry they concern, so the window and the build gate never disagree.
 6. **Add, rename, delete and move to another table,** all with Undo through a stand-in object registered with Unity's Undo. Moving leaves a cross-table alias.
-7. **Edits save when committed** (Enter or leaving the cell). There's no unsaved state, and bound text updates live.
-8. **Generated code is written when the user leaves the window or after a short idle period,** never in the middle of typing, and waits until Play Mode ends.
+7. **Edits save when committed** (Enter or leaving the cell). There's no unsaved state, and bound text updates live. Double-clicking a cell edits it in place; a text with line breaks opens in the detail pane, where Enter starts a new line and Ctrl+Enter commits.
+8. **Generated code waits until the editor loses focus** (section 11), never in the middle of typing, and waits until Play Mode ends.
 
 ### 12.4 Inspector field
 
 1. **`EntryReference`** is the serializable field type. It lives in the Unity layer and stores the catalog, table and key as names. The Inspector fills the catalog in when an entry is picked, so a reusable component works with whichever catalog its entry comes from. `[EntryCatalog(typeof(ToolWindowKeys))]` limits a field's dropdown to one catalog.
 2. **`CatalogReference`** is the field type for components that work with a whole catalog, such as a language picker. Empty means the default catalog.
-3. **The field shows `Shop ▾ Purchase`** with a text preview in the current preview language.
+3. **The field shows `Shop.Purchase`** as a popup, with a text preview in the current preview language below it. The key is written the same way everywhere else: in validation messages, in search, and in generated code.
 4. **Clicking it opens a search popup.** It searches keys *and* text, shows recent picks first, and only renders visible results.
 5. **Creating entries on the spot.** When nothing matches, the popup offers to create the entry.
    1. The table defaults to the one named after the prefab or scene being edited, then the last used one, or the user types a new table name.
-   2. The key is suggested from the GameObject's name, with UI suffixes stripped (`TitleLabel` → `Title`). It's never suggested from the English text, because entries are named after their role.
-   3. Creating an entry writes only the source file, so there's no recompile.
-   4. `EntryAuthoring` is the public editor API behind it, so samples and project tools create entries the same way.
+   2. The key is suggested from the GameObject's name, with UI suffixes stripped (`TitleLabel` → `Title`). The field's own role follows when it has one (`_description` on `Sword` → `SwordDescription`). It's never suggested from the English text, because entries are named after their role.
+   3. A search written as `Table.Entry` names the new entry; any other search becomes its text.
+   4. Creating an entry writes only the source file, so there's no recompile (section 11). Creating the entry and assigning it to the field are one Undo step.
+   5. `EntryAuthoring` is the public editor API behind it, so samples and project tools create entries the same way.
 6. **Broken references show red.** When a renamed key's alias resolves, the field offers to update itself.
 7. **The field is drawn in both UI Toolkit and IMGUI inspectors.**
 
 ### 12.5 Scene view overlay
 
-The overlay switches the preview language, and every bound text in the open scenes updates live in Edit Mode.
+The overlay switches the preview language, and every bound text in the open scenes updates live in Edit Mode. Entry field previews and the table window's preview use the same language.
+
+1. **Components opt in through `EditModePreview`.** Outside Play Mode it hands out one localizer per catalog in the preview language. It falls back to the catalog's source language when the catalog lacks that one. Those localizers are disposed before Play Mode and before scripts reload.
+2. **Preview text is never saved.** A component showing it registers with `EditModePreview.Track`. Before its scene or prefab saves, the component puts its authored text back, and it shows the preview again right after. Text typed over the preview counts as the new authored text.
+3. The Quick Start access point returns the preview localizer in Edit Mode (section 15), and the TextMeshPro component previews through it.
 
 ### 12.6 Menus
 
 1. `Window/ReactiveLocalizer/Tables`
 2. `Tools/ReactiveLocalizer/…` (validate, import, export, character sets, write the agent guide)
-3. `Assets/Create/ReactiveLocalizer/…` (catalog, table)
+3. `Assets/Create/ReactiveLocalizer/…` (catalog, table). Creating a catalog asks for its name, source language, culture and display name, and checks the culture against CLDR. Creating the first table of a project without a catalog asks the same first.
 
 ## 13. Exchange formats
 
