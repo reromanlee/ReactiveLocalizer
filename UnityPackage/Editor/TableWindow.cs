@@ -16,8 +16,6 @@ namespace reromanlee.ReactiveLocalizer.Editor
     /// </summary>
     internal sealed class TableWindow : EditorWindow, ITableEditor
     {
-        private const string TableTemplate = "# One entry per line, written as Key = Text. Comments right above an entry are the context translators see.\n";
-
         [SerializeField] private string _catalogName;
         [SerializeField] private string _tableName;
         [SerializeField] private string _selectedKey;
@@ -467,7 +465,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
                     _catalogName = catalog.Name;
                     _tableName = values[0];
                     _selectedKey = null;
-                    TableFileUndo.Write(new[] { new KeyValuePair<string, string>(path, TableTemplate) }, $"Create the table {values[0]}");
+                    TableFileUndo.Write(new[] { new KeyValuePair<string, string>(path, LocalizationMenus.TableTemplate) }, $"Create the table {values[0]}");
                     Refresh(true);
                     return null;
                 });

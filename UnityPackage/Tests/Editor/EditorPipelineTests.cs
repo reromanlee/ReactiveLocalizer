@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using reromanlee.ReactiveLocalizer.Authoring;
+using reromanlee.ReactiveLocalizer.Documents;
 using reromanlee.ReactiveLocalizer.Editor;
 using reromanlee.ReactiveLocalizer.Tables;
 using reromanlee.ReactiveLocalizer.Unity;
@@ -336,6 +337,23 @@ namespace reromanlee.ReactiveLocalizer.Tests
             {
                 settings.PreviewLanguage = previous;
             }
+        }
+
+        [Test]
+        public void NewCatalogText_DefinesTheSourceLanguageAndItsCulture()
+        {
+            List<DocumentIssue> issues = new();
+
+            CatalogInfo catalog = CatalogInfo.FromDocument(new CatalogKey("Fresh"),
+                CatalogDocument.Parse(CatalogCreationWindow.CreateText("Japanese", "ja", "Nihongo")), null, issues);
+            CatalogInfo withoutCulture = CatalogInfo.FromDocument(new CatalogKey("Fresh"),
+                CatalogDocument.Parse(CatalogCreationWindow.CreateText("Elvish", string.Empty, "Elvish")), null, issues);
+
+            Assert.That(issues, Is.Empty);
+            Assert.That(catalog.SourceLanguage.Name, Is.EqualTo("Japanese"));
+            Assert.That(catalog.SourceLanguage.Culture, Is.EqualTo("ja"));
+            Assert.That(catalog.SourceLanguage.DisplayName, Is.EqualTo("Nihongo"));
+            Assert.That(withoutCulture.SourceLanguage.Name, Is.EqualTo("Elvish"));
         }
 
         [Test]
