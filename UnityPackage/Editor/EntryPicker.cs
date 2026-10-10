@@ -404,7 +404,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
             _form.style.display = DisplayStyle.Flex;
             string query = _search.value?.Trim();
             _formTitle.text = _isFormChosen || string.IsNullOrEmpty(query) ? "New entry" : $"Nothing matches '{query}'. Create it?";
-            _footer.text = _isFormChosen ? "Enter creates   Esc goes back" : "Enter creates   Esc closes";
+            _footer.text = _isFormChosen ? "Enter creates \u00B7 Esc goes back" : "Enter creates \u00B7 Esc closes";
             if (isChosen)
             {
                 _keyField.Focus();
@@ -416,7 +416,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
             _isFormShown = false;
             _form.style.display = DisplayStyle.None;
             _listView.style.display = DisplayStyle.Flex;
-            _footer.text = "\u2191\u2193 move   Enter picks   Esc closes";
+            _footer.text = "\u2191\u2193 moves \u00B7 Enter picks \u00B7 Esc closes";
         }
 
         private static string ToPreview(string text)
