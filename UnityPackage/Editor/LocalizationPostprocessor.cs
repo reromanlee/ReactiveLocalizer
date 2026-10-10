@@ -6,8 +6,9 @@ namespace reromanlee.ReactiveLocalizer.Editor
 {
     /// <summary>
     /// Watches localization files. Whenever a catalog changes, ownership is rescanned, which reimports the tables it
-    /// moved between catalogs; whenever any localization file changes, the index is rebuilt on next use and generated
-    /// code is brought up to date.
+    /// moved between catalogs; whenever any localization file changes, the index is rebuilt on next use, generated
+    /// code is brought up to date, and every live localizer reloads, so bound text shows the edit in Play Mode and
+    /// Edit Mode alike.
     /// </summary>
     internal sealed class LocalizationPostprocessor : AssetPostprocessor
     {
@@ -37,6 +38,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 CatalogLayout.ForgetTableFiles();
                 CatalogIndex.Invalidate();
                 KeysGenerator.Schedule();
+                // Imports are done by now, so the localizers read the new files right away.
+                Localizer.ReloadAll();
             }
             if (hasTableChanged)
             {

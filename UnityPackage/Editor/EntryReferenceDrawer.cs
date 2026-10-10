@@ -1,15 +1,18 @@
-using reromanlee.ReactiveLocalizer.Documents;
 using reromanlee.ReactiveLocalizer.Unity;
-using System;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
+using Object = UnityEngine.Object;
 
 namespace reromanlee.ReactiveLocalizer.Editor
 {
     /// <summary>
-    /// Draws an <see cref="EntryReference"/> as a dropdown of the project's entries, with the picked entry's source
-    /// text below it, or the problem when the entry doesn't exist. Picking an entry also stores its catalog.
+    /// Draws an <see cref="EntryReference"/> as <c>Table.Entry</c> opening the entry picker, with the entry's text in
+    /// the preview language below it. A broken reference shows red; one found by a former name offers to update
+    /// itself. Drawn natively in both UI Toolkit and IMGUI inspectors, and limited to one catalog by
+    /// <see cref="EntryCatalogAttribute"/>.
     /// </summary>
     [CustomPropertyDrawer(typeof(EntryReference))]
     internal sealed class EntryReferenceDrawer : PropertyDrawer
@@ -17,8 +20,32 @@ namespace reromanlee.ReactiveLocalizer.Editor
         private const string CatalogField = "_catalog";
         private const string TableField = "_table";
         private const string EntryField = "_entry";
+        private const float FixButtonWidth = 56f;
 
-        private static GUIStyle _problemStyle;
+        private static readonly Dictionary<EntryPreviewKind, GUIStyle> PreviewStyles = new();
+        private static bool _previewStylesSkin;
+
+        private string _limitedCatalog;
+        private bool _hasReadLimit;
+
+        /// <summary>The only catalog the field takes, from its <see cref="EntryCatalogAttribute"/>; null for any.</summary>
+        private string LimitedCatalog
+        {
+            get
+            {
+                if (!_hasReadLimit)
+                {
+                    _hasReadLimit = true;
+                    _limitedCatalog = fieldInfo?.GetCustomAttribute<EntryCatalogAttribute>()?.ResolveCatalogName();
+                }
+                return _limitedCatalog;
+            }
+        }
+
+        public override VisualElement CreatePropertyGUI(SerializedProperty property)
+        {
+            return new EntryReferenceField(property, property.displayName, LimitedCatalog, fieldInfo?.Name);
+        }
 
         public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
         {
@@ -27,124 +54,121 @@ namespace reromanlee.ReactiveLocalizer.Editor
 
         public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
         {
-            SerializedProperty catalog = property.FindPropertyRelative(CatalogField);
-            SerializedProperty table = property.FindPropertyRelative(TableField);
-            SerializedProperty entry = property.FindPropertyRelative(EntryField);
-            EditorGUI.BeginProperty(position, label, property);
-
+            EntryReference value = Read(property);
+            bool isMixed = property.hasMultipleDifferentValues;
+            label = EditorGUI.BeginProperty(position, label, property);
             Rect line = new(position.x, position.y, position.width, EditorGUIUtility.singleLineHeight);
             Rect field = EditorGUI.PrefixLabel(line, label);
-            string picked = property.hasMultipleDifferentValues
-                ? "Mixed"
-                : string.IsNullOrEmpty(entry.stringValue) ? "None" : $"{table.stringValue}.{entry.stringValue}";
-            if (EditorGUI.DropdownButton(field, new GUIContent(picked, catalog.stringValue), FocusType.Keyboard))
+            if (EditorGUI.DropdownButton(field, new GUIContent(GetDisplayName(value, isMixed), value.CatalogName), FocusType.Keyboard))
             {
-                ShowMenu(field, property, catalog.stringValue, table.stringValue, entry.stringValue);
+                OpenPicker(GUIUtility.GUIToScreenRect(field), property.serializedObject.targetObjects, property.propertyPath, value, LimitedCatalog, fieldInfo?.Name);
             }
-
-            Rect preview = new(field.x, line.yMax + EditorGUIUtility.standardVerticalSpacing, field.width, EditorGUIUtility.singleLineHeight);
-            if (!property.hasMultipleDifferentValues)
+            if (!isMixed)
             {
-                string text = DescribeEntry(catalog.stringValue, table.stringValue, entry.stringValue, out bool isProblem);
-                EditorGUI.LabelField(preview, text, isProblem ? GetProblemStyle() : EditorStyles.miniLabel);
+                Rect preview = new(field.x, line.yMax + EditorGUIUtility.standardVerticalSpacing, field.width, EditorGUIUtility.singleLineHeight);
+                EntryDescription description = EntryPreview.Describe(value, LimitedCatalog);
+                if (description.Kind == EntryPreviewKind.Renamed)
+                {
+                    Rect button = new(preview.xMax - FixButtonWidth, preview.y, FixButtonWidth, preview.height);
+                    preview.xMax = button.x - 2f;
+                    if (GUI.Button(button, new GUIContent("Update", $"Point the field at {description.Fix}."), EditorStyles.miniButton))
+                    {
+                        Write(property, description.Fix);
+                    }
+                }
+                GUI.Label(preview, new GUIContent(description.Text, description.Tooltip ?? description.Text), GetPreviewStyle(description.Kind));
             }
             EditorGUI.EndProperty();
         }
 
-        /// <summary>Returns the entry's source text, or what is wrong with the reference.</summary>
-        private static string DescribeEntry(string catalogName, string tableName, string entryName, out bool isProblem)
+        /// <summary>Reads the reference <paramref name="property"/> holds.</summary>
+        public static EntryReference Read(SerializedProperty property)
         {
-            isProblem = false;
-            if (string.IsNullOrEmpty(entryName))
-            {
-                return "Pick an entry.";
-            }
-            isProblem = true;
-            IndexedCatalog catalog = FindCatalog(catalogName);
-            if (catalog == null)
-            {
-                return string.IsNullOrEmpty(catalogName)
-                    ? "No default catalog. Create one with Assets > Create > ReactiveLocalizer > Catalog."
-                    : $"There is no catalog '{catalogName}'.";
-            }
-            if (!NameRules.IsValid(tableName) || !catalog.TryGetTable(new TableKey(tableName), out IndexedTable table) || table.SourceDocument == null)
-            {
-                return $"The catalog '{catalog.Name}' has no table '{tableName}'.";
-            }
-            if (!table.SourceDocument.TryGetEntry(entryName, out TableDocumentEntry found))
-            {
-                return $"The table '{tableName}' has no entry '{entryName}'.";
-            }
-            isProblem = false;
-            return found.Value.Length == 0 ? "(intentionally empty)" : found.Value.Replace('\n', ' ');
+            return new EntryReference(
+                property.FindPropertyRelative(CatalogField).stringValue,
+                property.FindPropertyRelative(TableField).stringValue,
+                property.FindPropertyRelative(EntryField).stringValue);
         }
 
-        private static IndexedCatalog FindCatalog(string catalogName)
+        /// <summary>Returns what the field's button says: <c>Table.Entry</c>, None, or a dash for several different values.</summary>
+        public static string GetDisplayName(EntryReference value, bool isMixed)
         {
-            if (string.IsNullOrEmpty(catalogName))
-            {
-                return CatalogIndex.DefaultCatalog;
-            }
-            return NameRules.IsValid(catalogName) ? CatalogIndex.Find(new CatalogKey(catalogName)) : null;
+            return isMixed ? "\u2014" : value.IsEmpty ? "None" : value.ToString();
         }
 
-        private static void ShowMenu(Rect field, SerializedProperty property, string pickedCatalog, string pickedTable, string pickedEntry)
+        /// <summary>
+        /// Opens the entry picker below <paramref name="screenRect"/>, and stores the pick in the property at
+        /// <paramref name="propertyPath"/> of every object of <paramref name="targets"/> still alive by then.
+        /// </summary>
+        public static void OpenPicker(Rect screenRect, Object[] targets, string propertyPath, EntryReference current, string limitedCatalog, string fieldName)
         {
-            SerializedObject serializedObject = property.serializedObject;
-            string propertyPath = property.propertyPath;
-            GenericMenu menu = new();
-            menu.AddItem(new GUIContent("None"), string.IsNullOrEmpty(pickedEntry), () => Assign(serializedObject, propertyPath, null, null, null));
-            IReadOnlyList<IndexedCatalog> catalogs = CatalogIndex.Catalogs;
-            // With one catalog its name is noise; with several, it is the first level of the menu.
-            bool isNamingCatalogs = catalogs.Count > 1;
-            foreach (IndexedCatalog catalog in catalogs)
+            GameObject context = targets.Length > 0 ? targets[0] switch
             {
-                menu.AddSeparator(string.Empty);
-                string prefix = isNamingCatalogs ? catalog.Name + "/" : string.Empty;
-                foreach (IndexedTable table in catalog.Tables)
+                Component component => component.gameObject,
+                GameObject gameObject => gameObject,
+                _ => null
+            } : null;
+            EntryPicker.Show(screenRect, new EntryPickerRequest(current, limitedCatalog, context, fieldName), picked => Assign(targets, propertyPath, picked));
+        }
+
+        /// <summary>Stores <paramref name="value"/> in the property at <paramref name="propertyPath"/> of the objects of <paramref name="targets"/> still alive, as one step Undo can take back.</summary>
+        public static void Assign(Object[] targets, string propertyPath, EntryReference value)
+        {
+            List<Object> alive = new(targets.Length);
+            for (int i = 0; i < targets.Length; i++)
+            {
+                if (targets[i] != null)
                 {
-                    if (table.SourceDocument == null)
-                    {
-                        continue;
-                    }
-                    List<string> keys = new();
-                    foreach (TableDocumentEntry entry in table.SourceDocument.Entries)
-                    {
-                        keys.Add(entry.Key);
-                    }
-                    keys.Sort(StringComparer.OrdinalIgnoreCase);
-                    foreach (string key in keys)
-                    {
-                        string catalogName = catalog.Name;
-                        string tableName = table.Name;
-                        bool isPicked = string.Equals(catalogName, pickedCatalog, StringComparison.OrdinalIgnoreCase) &&
-                                        string.Equals(tableName, pickedTable, StringComparison.OrdinalIgnoreCase) &&
-                                        string.Equals(key, pickedEntry, StringComparison.OrdinalIgnoreCase);
-                        menu.AddItem(new GUIContent($"{prefix}{tableName}/{key}"), isPicked, () => Assign(serializedObject, propertyPath, catalogName, tableName, key));
-                    }
+                    alive.Add(targets[i]);
                 }
             }
-            menu.DropDown(field);
-        }
-
-        private static void Assign(SerializedObject serializedObject, string propertyPath, string catalogName, string tableName, string entryName)
-        {
-            serializedObject.Update();
+            if (alive.Count == 0)
+            {
+                return;
+            }
+            using SerializedObject serializedObject = new(alive.ToArray());
             SerializedProperty property = serializedObject.FindProperty(propertyPath);
-            property.FindPropertyRelative(CatalogField).stringValue = catalogName ?? string.Empty;
-            property.FindPropertyRelative(TableField).stringValue = tableName ?? string.Empty;
-            property.FindPropertyRelative(EntryField).stringValue = entryName ?? string.Empty;
+            if (property == null)
+            {
+                return;
+            }
+            Write(property, value);
             serializedObject.ApplyModifiedProperties();
         }
 
-        private static GUIStyle GetProblemStyle()
+        /// <summary>Returns the color the preview of <paramref name="kind"/> is drawn in.</summary>
+        public static Color GetPreviewColor(EntryPreviewKind kind)
         {
-            if (_problemStyle == null)
+            return kind switch
             {
-                _problemStyle = new GUIStyle(EditorStyles.miniLabel);
-                _problemStyle.normal.textColor = new Color(0.9f, 0.35f, 0.3f);
+                EntryPreviewKind.Broken => LocalizationColors.Problem,
+                EntryPreviewKind.Renamed => LocalizationColors.Warning,
+                _ => LocalizationColors.Muted
+            };
+        }
+
+        private static void Write(SerializedProperty property, EntryReference value)
+        {
+            property.FindPropertyRelative(CatalogField).stringValue = value.CatalogName ?? string.Empty;
+            property.FindPropertyRelative(TableField).stringValue = value.TableName ?? string.Empty;
+            property.FindPropertyRelative(EntryField).stringValue = value.EntryName ?? string.Empty;
+        }
+
+        private static GUIStyle GetPreviewStyle(EntryPreviewKind kind)
+        {
+            // The colors follow the editor skin, which can change while the styles are cached.
+            if (_previewStylesSkin != EditorGUIUtility.isProSkin)
+            {
+                PreviewStyles.Clear();
+                _previewStylesSkin = EditorGUIUtility.isProSkin;
             }
-            return _problemStyle;
+            if (!PreviewStyles.TryGetValue(kind, out GUIStyle style))
+            {
+                style = new GUIStyle(EditorStyles.miniLabel) { clipping = TextClipping.Clip };
+                style.normal.textColor = GetPreviewColor(kind);
+                PreviewStyles.Add(kind, style);
+            }
+            return style;
         }
     }
 }

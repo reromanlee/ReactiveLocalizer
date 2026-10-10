@@ -21,6 +21,17 @@ namespace reromanlee.ReactiveLocalizer
         /// source language or a fallback is not among the languages; or fallbacks form a loop.
         /// </exception>
         public CatalogInfo(CatalogKey key, LanguageKey sourceLanguage, IReadOnlyList<LanguageInfo> languages, IReadOnlyList<TableInfo> tables)
+            : this(key, sourceLanguage, languages, tables, null)
+        {
+        }
+
+        /// <param name="key">Identity of the catalog.</param>
+        /// <param name="sourceLanguage">The language the catalog's tables are written in.</param>
+        /// <param name="languages">The catalog's languages.</param>
+        /// <param name="tables">The catalog's tables.</param>
+        /// <param name="movedEntries">The key each entry moved from another table had, with its key now; null for none.</param>
+        internal CatalogInfo(CatalogKey key, LanguageKey sourceLanguage, IReadOnlyList<LanguageInfo> languages, IReadOnlyList<TableInfo> tables,
+            IReadOnlyDictionary<(ulong Table, ulong Entry), EntryKey> movedEntries)
         {
             if (key.IsEmpty)
             {
@@ -69,6 +80,7 @@ namespace reromanlee.ReactiveLocalizer
             SourceLanguage = source;
             Languages = languages;
             Tables = tableList;
+            MovedEntries = movedEntries ?? global::reromanlee.ReactiveLocalizer.Tables.MovedEntries.None;
             _formats = new Dictionary<ulong, LanguageFormat>(languages.Count);
             for (int i = 0; i < languages.Count; i++)
             {
@@ -87,6 +99,12 @@ namespace reromanlee.ReactiveLocalizer
 
         /// <summary>The catalog's tables.</summary>
         public IReadOnlyList<TableInfo> Tables { get; }
+
+        /// <summary>
+        /// The key each entry moved from another table had, by its old table and entry hashes, with its key now, so
+        /// saved references to an old key still find the entry.
+        /// </summary>
+        internal IReadOnlyDictionary<(ulong Table, ulong Entry), EntryKey> MovedEntries { get; }
 
         /// <summary>Returns the language with <paramref name="key"/>.</summary>
         public bool TryGetLanguage(LanguageKey key, out LanguageInfo language) => _languages.TryGetValue(key.Hash, out language) && !key.IsEmpty;
@@ -217,7 +235,7 @@ namespace reromanlee.ReactiveLocalizer
                 languages[i] = Languages[i];
             }
             languages[Languages.Count] = language;
-            catalog = new CatalogInfo(Key, SourceLanguage.Key, languages, Tables);
+            catalog = new CatalogInfo(Key, SourceLanguage.Key, languages, Tables, MovedEntries);
             error = null;
             return true;
         }

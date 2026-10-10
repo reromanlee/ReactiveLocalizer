@@ -52,8 +52,8 @@ namespace reromanlee.ReactiveLocalizer
         // Tables nothing held at the last update; they unload at the next one unless something holds them again.
         private readonly List<ulong> _releasedTables = new();
         private readonly List<TableKey> _heldTables = new();
-        // Languages registered before the catalog arrived, added as soon as it does.
-        private readonly List<LanguageInfo> _pendingLanguages = new();
+        // Every language registered at runtime, added again whenever the catalog arrives, as after a reload.
+        private readonly List<LanguageInfo> _registeredLanguages = new();
         private CatalogInfo _catalog;
         private LanguageSwitch _pendingSwitch;
         private LanguageKey _startingLanguage;
@@ -85,6 +85,7 @@ namespace reromanlee.ReactiveLocalizer
             _isLoadedTableNeeded = IsLoadedTableNeeded;
             _getLoadedResult = GetLoadedResult;
             _loader = new TableLoader(host, _onReceived, (severity, message) => Report(severity, message));
+            LiveLocalizers.Add(this);
         }
 
         /// <inheritdoc/>
@@ -173,6 +174,7 @@ namespace reromanlee.ReactiveLocalizer
             {
                 return;
             }
+            LiveLocalizers.Remove(this);
             _bindings.Clear();
             _holds.Clear();
             Volatile.Write(ref _state, LocalizerState.Empty);
@@ -449,7 +451,7 @@ namespace reromanlee.ReactiveLocalizer
                 ReportIfMessage(table, index, key.Table.Name, key.Name);
                 return table.GetString(index);
             }
-            return IsAwaitingTable(state, key.Table.Hash) ? null : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
+            return IsAwaitingTable(state, key.Table.Hash, key.Hash) ? null : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
         }
 
         /// <summary>
@@ -475,7 +477,7 @@ namespace reromanlee.ReactiveLocalizer
                 characters = table.GetMemory(index);
                 return true;
             }
-            if (IsAwaitingTable(state, key.Table.Hash))
+            if (IsAwaitingTable(state, key.Table.Hash, key.Hash))
             {
                 return false;
             }
@@ -498,7 +500,7 @@ namespace reromanlee.ReactiveLocalizer
             }
             if (!state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out int languageIndex))
             {
-                if (IsAwaitingTable(state, key.Table.Hash))
+                if (IsAwaitingTable(state, key.Table.Hash, key.Hash))
                 {
                     return false;
                 }
@@ -571,7 +573,7 @@ namespace reromanlee.ReactiveLocalizer
             }
             if (!state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out int languageIndex))
             {
-                return isForBinding && IsAwaitingTable(state, key.Table.Hash)
+                return isForBinding && IsAwaitingTable(state, key.Table.Hash, key.Hash)
                     ? null
                     : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
             }
@@ -676,7 +678,7 @@ namespace reromanlee.ReactiveLocalizer
         /// </summary>
         private string GetMissingMarker(LocalizerState state, ReadOnlySpan<char> tableName, ReadOnlySpan<char> entryName, ulong tableHash, ulong entryHash)
         {
-            if (IsAwaitingTable(state, tableHash))
+            if (IsAwaitingTable(state, tableHash, entryHash))
             {
                 if (_reportedProblems.TryAdd(tableHash, 0, 6))
                 {

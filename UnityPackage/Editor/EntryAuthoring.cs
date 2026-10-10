@@ -1,4 +1,3 @@
-using reromanlee.ReactiveLocalizer.Documents;
 using reromanlee.ReactiveLocalizer.Messages;
 using reromanlee.ReactiveLocalizer.Unity;
 using System;
@@ -20,6 +19,9 @@ namespace reromanlee.ReactiveLocalizer.Editor
         /// <summary>Endings that describe a UI element rather than its role, left out of suggested keys.</summary>
         private static readonly string[] ElementSuffixes = { "Label", "Text", "Caption", "Str", "Txt", "TMP", "TextMeshPro" };
 
+        /// <summary>Field names that only say a field holds an entry, which add nothing to a key.</summary>
+        private static readonly string[] GenericFieldWords = { "Entry", "Key", "Reference", "Ref", "Localized", "Content", "Value", "Message", "String" };
+
         /// <summary>
         /// Suggests a key for text a GameObject shows, from the GameObject's name rather than the text: entries are
         /// named after their role. <c>Title Label (1)</c> suggests <c>Title</c>.
@@ -27,32 +29,68 @@ namespace reromanlee.ReactiveLocalizer.Editor
         public static string SuggestKey(string gameObjectName)
         {
             List<string> words = SplitWords(gameObjectName);
-            while (words.Count > 1 && IsElementSuffix(words[words.Count - 1]))
-            {
-                words.RemoveAt(words.Count - 1);
-            }
+            StripElementSuffixes(words);
             string key = JoinPascalCase(words);
             return NameRules.IsValid(key) ? key : "Entry";
         }
 
         /// <summary>
+        /// Suggests a key for the field named <paramref name="fieldName"/> of a component on a GameObject: the
+        /// GameObject's role, followed by the field's own role when it has one. <c>_description</c> on <c>Sword</c>
+        /// suggests <c>SwordDescription</c>, and <c>_entry</c> on <c>Title Label</c> suggests <c>Title</c>.
+        /// </summary>
+        public static string SuggestKey(string gameObjectName, string fieldName)
+        {
+            List<string> words = SplitWords(gameObjectName);
+            StripElementSuffixes(words);
+            string owner = JoinPascalCase(words);
+            List<string> fieldWords = SplitWords(fieldName);
+            StripElementSuffixes(fieldWords);
+            fieldWords.RemoveAll(IsGenericFieldWord);
+            string role = JoinPascalCase(fieldWords);
+            if (!NameRules.IsValid(owner))
+            {
+                return NameRules.IsValid(role) ? role : "Entry";
+            }
+            if (role.Length == 0 || owner.EndsWith(role, StringComparison.OrdinalIgnoreCase) || !NameRules.IsValid(owner + role))
+            {
+                return owner;
+            }
+            return owner + role;
+        }
+
+        /// <summary>
         /// Suggests the table for text shown by <paramref name="context"/>: the table named after the prefab being
-        /// edited, or else the object's scene, matching the convention of one table per owner.
+        /// edited or selected, or else the object's scene, matching the convention of one table per owner.
         /// </summary>
         public static string SuggestTable(GameObject context)
         {
-            string owner = null;
+            return SuggestOwnerTable(context) ?? "Common";
+        }
+
+        /// <summary>Returns the table named after the prefab or scene owning <paramref name="context"/>, or null when it has no usable name, as an unsaved scene.</summary>
+        internal static string SuggestOwnerTable(GameObject context)
+        {
+            if (context == null)
+            {
+                return null;
+            }
+            string owner;
             PrefabStage stage = PrefabStageUtility.GetCurrentPrefabStage();
-            if (stage != null && context != null && stage.IsPartOfPrefabContents(context))
+            if (stage != null && stage.IsPartOfPrefabContents(context))
             {
                 owner = Path.GetFileNameWithoutExtension(stage.assetPath);
             }
-            else if (context != null && context.scene.IsValid())
+            else if (PrefabUtility.IsPartOfPrefabAsset(context))
             {
-                owner = context.scene.name;
+                owner = Path.GetFileNameWithoutExtension(AssetDatabase.GetAssetPath(context));
+            }
+            else
+            {
+                owner = context.scene.IsValid() ? context.scene.name : null;
             }
             string table = JoinPascalCase(SplitWords(owner));
-            return NameRules.IsValid(table) ? table : "Common";
+            return NameRules.IsValid(table) ? table : null;
         }
 
         /// <summary>
@@ -85,47 +123,29 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 return false;
             }
 
-            string sourceLanguage = catalog.Info.SourceLanguage.Name;
-            string path = $"{catalog.Folder}/{tableName}.{sourceLanguage}.{LocalizationFiles.TableExtension}";
-            if (catalog.TryGetTable(new TableKey(tableName), out IndexedTable table) && table.SourcePath != null)
+            TableEdit edit = new(catalog, tableName);
+            if (edit.Files.Source?.HasErrors == true)
             {
-                path = table.SourcePath;
+                problem = $"The {catalog.Info.SourceLanguage.Name} file of '{tableName}' has errors. Fix them first, since rewriting the file would drop the lines that have them.";
+                return false;
             }
-            string existing = File.Exists(path) ? File.ReadAllText(path) : string.Empty;
-            string uniqueKey = MakeUnique(TableDocument.Parse(existing), key);
-
-            StringBuilder line = new();
-            if (existing.Length > 0 && existing[existing.Length - 1] != '\n')
-            {
-                line.Append('\n');
-            }
-            line.Append(uniqueKey).Append(" = ");
             // The text is shown as it is, so braces and apostrophes are quoted rather than read as a message.
-            TextEscaping.Escape(MessageQuoting.Quote(text), line);
-            line.Append('\n');
-            File.AppendAllText(path, line.ToString());
-            AssetDatabase.ImportAsset(path);
-            CatalogIndex.Invalidate();
+            string quoted = MessageQuoting.Quote(text ?? string.Empty);
+            string uniqueKey = key;
+            for (int number = 2; !edit.Files.TryAddEntry(uniqueKey, quoted, out problem); number++)
+            {
+                // A taken key, or a former name of another entry, gets a number; nothing else makes adding fail here.
+                if (number > 999)
+                {
+                    return false;
+                }
+                uniqueKey = key + number;
+            }
+            TableEdit.Save($"Create {tableName}.{uniqueKey}", edit);
 
             reference = new EntryReference(catalog.Name, tableName, uniqueKey);
             problem = null;
             return true;
-        }
-
-        private static string MakeUnique(TableDocument document, string key)
-        {
-            if (!document.TryGetEntry(key, out _))
-            {
-                return key;
-            }
-            for (int number = 2; ; number++)
-            {
-                string candidate = key + number;
-                if (!document.TryGetEntry(candidate, out _))
-                {
-                    return candidate;
-                }
-            }
         }
 
         /// <summary>Splits a name into words at every character that can't be in a name, and where lower case meets upper case.</summary>
@@ -177,11 +197,22 @@ namespace reromanlee.ReactiveLocalizer.Editor
             return joined.ToString();
         }
 
-        private static bool IsElementSuffix(string word)
+        /// <summary>Removes the words ending a name that describe a UI element, keeping at least one word.</summary>
+        private static void StripElementSuffixes(List<string> words)
         {
-            for (int i = 0; i < ElementSuffixes.Length; i++)
+            while (words.Count > 1 && IsAnyOf(words[words.Count - 1], ElementSuffixes))
             {
-                if (string.Equals(word, ElementSuffixes[i], StringComparison.OrdinalIgnoreCase))
+                words.RemoveAt(words.Count - 1);
+            }
+        }
+
+        private static bool IsGenericFieldWord(string word) => IsAnyOf(word, GenericFieldWords) || IsAnyOf(word, ElementSuffixes);
+
+        private static bool IsAnyOf(string word, string[] names)
+        {
+            for (int i = 0; i < names.Length; i++)
+            {
+                if (string.Equals(word, names[i], StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }

@@ -186,6 +186,33 @@ namespace reromanlee.ReactiveLocalizer.Tests
             Assert.That(issues, Is.Empty);
         }
 
+        [Test]
+        public void Compile_LeavesOutOrphansAndSuggestsTheKeyTheyMisspell()
+        {
+            CatalogInfo catalog = CreateCatalog();
+            TableDocument source = TableDocument.Parse("Purchase = Buy\nRefund = Return\nTitle = Shop");
+            List<DocumentIssue> issues = new();
+
+            CompiledTable table = Read(TableCompiler.Compile(catalog, Shop, Russian,
+                TableDocument.Parse("Purchase = Kupit\nRefnd = Vozvrat\nWelcome = Privet"), source, issues));
+
+            Assert.That(table.EntryCount, Is.EqualTo(1));
+            Assert.That(issues.Count, Is.EqualTo(2));
+            Assert.That(issues[0].Severity, Is.EqualTo(IssueSeverity.Error));
+            Assert.That(issues[0].Line, Is.EqualTo(2));
+            Assert.That(issues[0].Message, Does.Contain("Did you mean 'Refund'?"));
+            Assert.That(issues[1].Message, Does.Contain("'Welcome' isn't a key").And.Not.Contain("Did you mean"));
+        }
+
+        [TestCase("Refnd", "Refund", 1)]
+        [TestCase("Purhcase", "Purchase", 1)]
+        [TestCase("title", "Title", 0)]
+        [TestCase("Shop", "Purchase", 3)]
+        public void NameDistance_CountsTheEditsOfATypo(string left, string right, int expected)
+        {
+            Assert.That(NameDistance.Compute(left, right, 2), Is.EqualTo(expected));
+        }
+
         private static CatalogInfo CreateCatalog()
         {
             return CatalogInfo.FromDocument(Catalog, CatalogDocument.Parse("@source English\n[English]\nCulture = en\n[Russian]\nCulture = ru"), null, null);

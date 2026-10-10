@@ -33,6 +33,19 @@ namespace reromanlee.ReactiveLocalizer.Tables
             return start;
         }
 
+        /// <summary>Returns the buffer as the characters a loaded table holds.</summary>
+        public char[] ToCharacters()
+        {
+            char[] buffer = new char[Length];
+            int position = 0;
+            for (int i = 0; i < _texts.Count; i++)
+            {
+                _texts[i].CopyTo(0, buffer, position, _texts[i].Length);
+                position += _texts[i].Length;
+            }
+            return buffer;
+        }
+
         /// <summary>Writes the buffer, every text in the order it was added.</summary>
         public void WriteTo(ByteWriter writer)
         {

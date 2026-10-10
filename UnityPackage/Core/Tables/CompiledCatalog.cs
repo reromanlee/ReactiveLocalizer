@@ -15,6 +15,8 @@ namespace reromanlee.ReactiveLocalizer.Tables
     ///     string name, string display name, string culture, int32 fallback index or -1, byte direction, byte required,
     ///     then digits, decimal separator and group separator, each a byte telling whether it's set, then the string
     /// int32 table count, then per table: string name, byte loading, byte delivery, uint64 keys hash
+    /// int32 moved entry count, then per moved entry: uint64 former table hash, uint64 former entry hash,
+    ///     string table name, string entry name
     /// </code>
     /// </remarks>
     internal static class CompiledCatalog
@@ -23,7 +25,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
         public const uint Magic = 0x42434C52;
 
         /// <summary>Raised whenever the layout changes, so an older file is rebuilt instead of misread.</summary>
-        public const ushort Version = 3;
+        public const ushort Version = 4;
 
         public static byte[] Write(CatalogInfo catalog)
         {
@@ -55,6 +57,14 @@ namespace reromanlee.ReactiveLocalizer.Tables
                 writer.WriteByte((byte)table.Loading);
                 writer.WriteByte((byte)table.Delivery);
                 writer.WriteUInt64(table.KeysHash);
+            }
+            writer.WriteInt32(catalog.MovedEntries.Count);
+            foreach (KeyValuePair<(ulong Table, ulong Entry), EntryKey> moved in catalog.MovedEntries)
+            {
+                writer.WriteUInt64(moved.Key.Table);
+                writer.WriteUInt64(moved.Key.Entry);
+                writer.WriteString(moved.Value.Table.Name);
+                writer.WriteString(moved.Value.Name);
             }
             return writer.ToArray();
         }
@@ -136,6 +146,26 @@ namespace reromanlee.ReactiveLocalizer.Tables
                 }
                 tables[i] = new TableInfo(new TableKey(tableName), (TableLoading)loading, (TableDelivery)delivery, keysHash);
             }
+            if (!reader.TryReadCount(28, out int movedCount))
+            {
+                error = "The catalog's moved entries are damaged.";
+                return false;
+            }
+            Dictionary<(ulong Table, ulong Entry), EntryKey> movedEntries = new(movedCount);
+            for (int i = 0; i < movedCount; i++)
+            {
+                if (!reader.TryReadUInt64(out ulong formerTable) ||
+                    !reader.TryReadUInt64(out ulong formerEntry) ||
+                    !reader.TryReadString(out string tableName) ||
+                    !reader.TryReadString(out string entryName) ||
+                    !NameRules.IsValid(tableName) ||
+                    !NameRules.IsValid(entryName))
+                {
+                    error = "A moved entry of the catalog is damaged.";
+                    return false;
+                }
+                movedEntries[(formerTable, formerEntry)] = new EntryKey(tableName, entryName);
+            }
 
             // What the format can't express, such as two languages with one name, is still rejected by CatalogInfo.
             try
@@ -147,7 +177,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
                     languages[i] = new LanguageInfo(new LanguageKey(names[i]), displayNames[i], cultures[i], fallback,
                         (TextDirection)directions[i], requirements[i] != 0, digits[i], decimalSeparators[i], groupSeparators[i]);
                 }
-                catalog = new CatalogInfo(new CatalogKey(catalogName), new LanguageKey(names[sourceIndex]), languages, tables);
+                catalog = new CatalogInfo(new CatalogKey(catalogName), new LanguageKey(names[sourceIndex]), languages, tables, movedEntries);
             }
             catch (ArgumentException exception)
             {

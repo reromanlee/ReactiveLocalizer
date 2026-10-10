@@ -3,6 +3,7 @@ using reromanlee.ReactiveLocalizer.Unity;
 using System;
 using System.Collections.Generic;
 using UnityEditor;
+using UnityEngine;
 
 namespace reromanlee.ReactiveLocalizer.Editor
 {
@@ -19,7 +20,13 @@ namespace reromanlee.ReactiveLocalizer.Editor
         private static readonly Dictionary<string, (DateTime WriteTime, TableDocument Document)> Documents = new(StringComparer.Ordinal);
         private static List<IndexedCatalog> _catalogs;
 
+        /// <summary>Raised whenever the index is forgotten, as localization files change, so views showing it can refresh.</summary>
+        public static event Action Invalidated;
+
         public static IReadOnlyList<IndexedCatalog> Catalogs => _catalogs ??= Build();
+
+        /// <summary>Counts how many times the index was forgotten, so what is read from it can be cached until it changes.</summary>
+        public static int Version { get; private set; }
 
         /// <summary>The catalog tables outside every catalog folder belong to, or null when there is none or more than one.</summary>
         public static IndexedCatalog DefaultCatalog
@@ -46,6 +53,16 @@ namespace reromanlee.ReactiveLocalizer.Editor
         public static void Invalidate()
         {
             _catalogs = null;
+            Version++;
+            // A view failing to refresh must not stop the import that changed the files.
+            try
+            {
+                Invalidated?.Invoke();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+            }
         }
 
         public static IndexedCatalog Find(CatalogKey key)

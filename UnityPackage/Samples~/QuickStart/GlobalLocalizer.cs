@@ -32,11 +32,17 @@ namespace reromanlee.ReactiveLocalizer.Samples.QuickStart
 
         /// <summary>
         /// Returns the localizer of <paramref name="catalog"/>, creating and initializing it on first use. An empty key
-        /// means <see cref="DefaultCatalog"/>.
+        /// means <see cref="DefaultCatalog"/>. Outside Play Mode it returns the editor's preview localizer, which is null
+        /// when the project has no such catalog, or before the editor's preview starts.
         /// </summary>
         public static ILocalizer For(CatalogKey catalog)
         {
             CatalogKey key = catalog.IsEmpty ? DefaultCatalog : catalog;
+            // Edit Mode never gets a localizer of its own, which would outlive it.
+            if (!Application.isPlaying)
+            {
+                return EditModePreview.For(key);
+            }
             if (Localizers.TryGetValue(key.Hash, out ILocalizer existing))
             {
                 return existing;

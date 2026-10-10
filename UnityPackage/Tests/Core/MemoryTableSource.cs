@@ -50,7 +50,17 @@ namespace reromanlee.ReactiveLocalizer.Tests
                     : 0;
                 tableInfos.Add(new TableInfo(key, loading, TableDelivery.Embedded, keysHash));
             }
-            _catalogInfo = new CatalogInfo(CatalogKey, withoutTables.SourceLanguage.Key, withoutTables.Languages, tableInfos);
+            List<(string TableName, TableDocument Source)> sources = new();
+            for (int i = 0; i < tableNames.Count; i++)
+            {
+                TableKey key = new(tableNames[i]);
+                if (_texts.TryGetValue((key.Hash, withoutTables.SourceLanguage.Key.Hash), out string source))
+                {
+                    sources.Add((tableNames[i], TableDocument.Parse(source)));
+                }
+            }
+            _catalogInfo = new CatalogInfo(CatalogKey, withoutTables.SourceLanguage.Key, withoutTables.Languages, tableInfos,
+                isImported ? MovedEntries.Collect(sources) : null);
             _catalog = CompiledCatalog.Write(_catalogInfo);
             for (int i = 0; i < tables.Length; i++)
             {

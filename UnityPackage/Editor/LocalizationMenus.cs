@@ -13,26 +13,20 @@ namespace reromanlee.ReactiveLocalizer.Editor
     {
         private const string MenuRoot = "Assets/Create/ReactiveLocalizer/";
 
-        private const string CatalogTemplate =
-            "@source English\n" +
-            "\n" +
-            "[English]\n" +
-            "DisplayName = English\n" +
-            "Culture = en\n";
-
-        private const string TableTemplate =
+        /// <summary>What a new table file starts with.</summary>
+        internal const string TableTemplate =
             "# One entry per line, written as Key = Text. Comments right above an entry are the context translators see.\n";
 
+        /// <summary>Asks for the new catalog's name and source language, then creates it in the selected folder.</summary>
         [MenuItem(MenuRoot + "Catalog", priority = 81)]
         private static void CreateCatalog()
         {
-            string folder = GetSelectedFolder();
-            CreateFile(AssetDatabase.GenerateUniqueAssetPath($"{folder}/{LocalizationFiles.DefaultCatalogName}.{LocalizationFiles.CatalogExtension}"), CatalogTemplate);
+            CatalogCreationWindow.Show(GetSelectedFolder(), null);
         }
 
         /// <summary>
         /// Creates a table file for the source language of the catalog that owns the selected folder. In a project
-        /// with no catalog yet, the default catalog is created first.
+        /// with no catalog yet, the default catalog is created first, asking for its source language.
         /// </summary>
         [MenuItem(MenuRoot + "Table", priority = 82)]
         private static void CreateTable()
@@ -41,14 +35,19 @@ namespace reromanlee.ReactiveLocalizer.Editor
             string catalogPath = CatalogLayout.FindOwner($"{folder}/Table.Language.{LocalizationFiles.TableExtension}");
             if (catalogPath == null && CatalogLayout.CatalogPaths.Count == 0)
             {
-                catalogPath = CreateDefaultCatalog();
-                folder = LocalizationFiles.DefaultCatalogFolder;
+                CatalogCreationWindow.Show(LocalizationFiles.DefaultCatalogFolder, created => CreateTableFile(LocalizationFiles.DefaultCatalogFolder, created));
+                return;
             }
             if (catalogPath == null)
             {
                 Debug.LogWarning($"[ReactiveLocalizer] The folder '{folder}' belongs to no catalog. Create the table under a catalog's folder, or keep exactly one catalog in Assets.");
                 return;
             }
+            CreateTableFile(folder, catalogPath);
+        }
+
+        private static void CreateTableFile(string folder, string catalogPath)
+        {
             string sourceLanguage = ReadSourceLanguage(catalogPath);
             CreateFile(AssetDatabase.GenerateUniqueAssetPath($"{folder}/NewTable.{sourceLanguage}.{LocalizationFiles.TableExtension}"), TableTemplate);
         }
@@ -60,17 +59,6 @@ namespace reromanlee.ReactiveLocalizer.Editor
             Object created = AssetDatabase.LoadAssetAtPath<Object>(path);
             Selection.activeObject = created;
             EditorGUIUtility.PingObject(created);
-        }
-
-        private static string CreateDefaultCatalog()
-        {
-            string path = $"{LocalizationFiles.DefaultCatalogFolder}/{LocalizationFiles.DefaultCatalogName}.{LocalizationFiles.CatalogExtension}";
-            Directory.CreateDirectory(LocalizationFiles.DefaultCatalogFolder);
-            File.WriteAllText(path, CatalogTemplate);
-            CatalogLayout.Refresh();
-            AssetDatabase.ImportAsset(path);
-            Debug.Log($"[ReactiveLocalizer] Created the default catalog at {path}, written in English. Its generated classes are {LocalizationFiles.DefaultCatalogName}Keys and {LocalizationFiles.DefaultCatalogName}Languages.");
-            return path;
         }
 
         private static string ReadSourceLanguage(string catalogPath)

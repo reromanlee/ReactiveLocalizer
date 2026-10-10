@@ -1,4 +1,5 @@
 using reromanlee.ReactiveLocalizer.Authoring;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -12,11 +13,19 @@ namespace reromanlee.ReactiveLocalizer.Editor
     /// only when its content would change, so translating never costs a recompile, and waits while Play Mode runs,
     /// where a recompile would interrupt it.
     /// </summary>
+    /// <remarks>
+    /// Edits the editor's own tools make, such as creating an entry from the Inspector, leave the code to be written
+    /// when the editor loses focus: code only needs new keys once someone switches to write it, and the recompile
+    /// doesn't interrupt them in the editor.
+    /// </remarks>
     internal static class KeysGenerator
     {
+        private const string PendingState = "ReactiveLocalizer.KeysGenerator.IsPending";
+        private const string StartupCheckState = "ReactiveLocalizer.KeysGenerator.HasCheckedAtStartup";
         private static readonly UTF8Encoding Utf8WithoutMark = new(false);
         private static bool _isScheduled;
         private static bool _isWaitingForEditMode;
+        private static int _deferrals;
 
         /// <summary>
         /// Whether generation is held back, as editor tests do: writing a script would recompile and reload the
@@ -24,9 +33,28 @@ namespace reromanlee.ReactiveLocalizer.Editor
         /// </summary>
         public static bool IsSuspended { get; set; }
 
-        /// <summary>Runs generation once the current batch of imports is done.</summary>
+        /// <summary>Whether code waits to be written when the editor loses focus. Kept across domain reloads.</summary>
+        public static bool IsPending
+        {
+            get => SessionState.GetBool(PendingState, false);
+            private set => SessionState.SetBool(PendingState, value);
+        }
+
+        /// <summary>Until the returned scope is disposed, imports leave generation for when the editor loses focus.</summary>
+        public static DeferralScope Defer()
+        {
+            _deferrals++;
+            return new DeferralScope(true);
+        }
+
+        /// <summary>Runs generation once the current batch of imports is done, or, while deferred, when the editor loses focus.</summary>
         public static void Schedule()
         {
+            if (_deferrals > 0)
+            {
+                IsPending = true;
+                return;
+            }
             if (_isScheduled)
             {
                 return;
@@ -39,6 +67,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
         public static bool Run()
         {
             _isScheduled = false;
+            IsPending = false;
             if (IsSuspended)
             {
                 return false;
@@ -79,6 +108,27 @@ namespace reromanlee.ReactiveLocalizer.Editor
             Run();
         }
 
+        [InitializeOnLoadMethod]
+        private static void ListenForFocusLoss()
+        {
+            EditorApplication.focusChanged -= OnFocusChanged;
+            EditorApplication.focusChanged += OnFocusChanged;
+            // Code left pending when the last session ended is caught up once, as the editor starts.
+            if (!SessionState.GetBool(StartupCheckState, false))
+            {
+                SessionState.SetBool(StartupCheckState, true);
+                Schedule();
+            }
+        }
+
+        private static void OnFocusChanged(bool hasFocus)
+        {
+            if (!hasFocus && IsPending)
+            {
+                Run();
+            }
+        }
+
         private static bool WriteIfChanged(string path, string source)
         {
             // Line endings may have been converted by git or an editor; only a change of content counts.
@@ -110,6 +160,25 @@ namespace reromanlee.ReactiveLocalizer.Editor
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             _isWaitingForEditMode = false;
             Schedule();
+        }
+
+        /// <summary>Ends a deferral of <see cref="Defer"/> when disposed.</summary>
+        public readonly struct DeferralScope : IDisposable
+        {
+            private readonly bool _isActive;
+
+            internal DeferralScope(bool isActive)
+            {
+                _isActive = isActive;
+            }
+
+            public void Dispose()
+            {
+                if (_isActive && _deferrals > 0)
+                {
+                    _deferrals--;
+                }
+            }
         }
     }
 }

@@ -1,5 +1,7 @@
 using reromanlee.ReactiveLocalizer.Authoring;
 using reromanlee.ReactiveLocalizer.Documents;
+using reromanlee.ReactiveLocalizer.Tables;
+using System;
 using System.Collections.Generic;
 using UnityEditor.Compilation;
 using PackageInfo = UnityEditor.PackageManager.PackageInfo;
@@ -15,6 +17,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
     {
         private readonly Dictionary<ulong, IndexedTable> _tables = new();
         private readonly List<IndexedTable> _tableList = new();
+        private KeyResolver _resolver;
+        private List<EntrySearchItem> _searchItems;
 
         public IndexedCatalog(string path, string name)
         {
@@ -53,6 +57,50 @@ namespace reromanlee.ReactiveLocalizer.Editor
         /// <summary>Where the catalog's generated code goes: <c>LocalizationKeys.cs</c> next to the catalog.</summary>
         public string GeneratedCodePath => $"{Folder}/{Name}Keys.cs";
 
+        /// <summary>Tells what references to the catalog's entries find. Built on first use, once per index.</summary>
+        public KeyResolver Resolver
+        {
+            get
+            {
+                if (_resolver == null)
+                {
+                    List<(string TableName, TableDocument Source)> sources = new(_tableList.Count);
+                    for (int i = 0; i < _tableList.Count; i++)
+                    {
+                        sources.Add((_tableList[i].Name, _tableList[i].SourceDocument));
+                    }
+                    _resolver = new KeyResolver(sources);
+                }
+                return _resolver;
+            }
+        }
+
+        /// <summary>The catalog's entries with their source text, in natural order, as searches list them. Built on first use, once per index.</summary>
+        public IReadOnlyList<EntrySearchItem> SearchItems
+        {
+            get
+            {
+                if (_searchItems == null)
+                {
+                    List<IndexedTable> tables = new(_tableList);
+                    tables.Sort((left, right) => NaturalOrder.Instance.Compare(left.Name, right.Name));
+                    List<EntrySearchItem> items = new();
+                    for (int i = 0; i < tables.Count; i++)
+                    {
+                        IReadOnlyList<TableDocumentEntry> entries = tables[i].SourceDocument?.Entries;
+                        for (int e = 0; entries != null && e < entries.Count; e++)
+                        {
+                            items.Add(new EntrySearchItem(Name, tables[i].Name, entries[e].Key, entries[e].Value));
+                        }
+                    }
+                    // Canonical files are in natural order already, which leaves sorting to files written by hand.
+                    EntrySearch.Sort(items);
+                    _searchItems = items;
+                }
+                return _searchItems;
+            }
+        }
+
         public void AddFile(string tableName, string languageName, string assetPath)
         {
             TableKey key = new(tableName);
@@ -78,12 +126,14 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 return;
             }
             List<TableInfo> tables = new(_tableList.Count);
+            List<(string TableName, TableDocument Source)> sources = new(_tableList.Count);
             for (int i = 0; i < _tableList.Count; i++)
             {
                 _tableList[i].ReadSource(withoutTables.SourceLanguage.Key, ignored);
                 tables.Add(_tableList[i].Info);
+                sources.Add((_tableList[i].Name, _tableList[i].SourceDocument));
             }
-            Info = new CatalogInfo(Key, withoutTables.SourceLanguage.Key, withoutTables.Languages, tables);
+            Info = new CatalogInfo(Key, withoutTables.SourceLanguage.Key, withoutTables.Languages, tables, MovedEntries.Collect(sources));
         }
 
         /// <summary>
@@ -102,11 +152,13 @@ namespace reromanlee.ReactiveLocalizer.Editor
                     languages.Add(Info.Languages[i].Name);
                 }
             }
-            List<KeysScriptTable> tables = new();
+            // Per former table, the entries that moved from it, which its generated class keeps under their former names.
+            Dictionary<string, List<KeysScriptMovedEntry>> movedFrom = new(StringComparer.OrdinalIgnoreCase);
+            List<(IndexedTable Table, List<KeysScriptEntry> Entries, List<KeyValuePair<string, string>> Aliases)> generated = new();
             for (int i = 0; i < _tableList.Count; i++)
             {
                 IndexedTable table = _tableList[i];
-                if (table.SourceDocument == null || !table.Settings.GeneratesCode)
+                if (table.SourceDocument == null)
                 {
                     continue;
                 }
@@ -118,19 +170,55 @@ namespace reromanlee.ReactiveLocalizer.Editor
                     TableDocumentEntry entry = documentEntries[e];
                     KeysScriptEntry scriptEntry = KeysScriptEntry.FromSource(entry.Key, entry.Value);
                     entries.Add(scriptEntry);
-                    if (scriptEntry.HasMessageErrors && brokenMessage == null)
+                    if (scriptEntry.HasMessageErrors && brokenMessage == null && table.Settings.GeneratesCode)
                     {
                         brokenMessage = $"'{table.Name}.{entry.Key}' in {table.SourcePath}, line {entry.Line}";
                     }
                     for (int a = 0; a < entry.Attributes.Count; a++)
                     {
-                        if (entry.Attributes[a].Name == DocumentNames.Formerly && NameRules.IsValid(entry.Attributes[a].Value))
+                        if (entry.Attributes[a].Name != DocumentNames.Formerly)
                         {
-                            aliases.Add(new KeyValuePair<string, string>(entry.Attributes[a].Value, entry.Key));
+                            continue;
+                        }
+                        string alias = entry.Attributes[a].Value;
+                        if (MovedEntries.TryParseQualified(alias, out string formerTable, out string formerEntry))
+                        {
+                            if (!string.Equals(formerTable, table.Name, StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!movedFrom.TryGetValue(formerTable, out List<KeysScriptMovedEntry> moved))
+                                {
+                                    moved = new List<KeysScriptMovedEntry>();
+                                    movedFrom.Add(formerTable, moved);
+                                }
+                                moved.Add(new KeysScriptMovedEntry(formerEntry, table.Name, scriptEntry));
+                                continue;
+                            }
+                            alias = formerEntry;
+                        }
+                        if (NameRules.IsValid(alias))
+                        {
+                            aliases.Add(new KeyValuePair<string, string>(alias, entry.Key));
                         }
                     }
                 }
-                tables.Add(new KeysScriptTable(table.Name, entries, aliases));
+                generated.Add((table, entries, aliases));
+            }
+
+            List<KeysScriptTable> tables = new();
+            for (int i = 0; i < generated.Count; i++)
+            {
+                IndexedTable table = generated[i].Table;
+                movedFrom.TryGetValue(table.Name, out List<KeysScriptMovedEntry> moved);
+                movedFrom.Remove(table.Name);
+                if (table.Settings.GeneratesCode)
+                {
+                    tables.Add(new KeysScriptTable(table.Name, generated[i].Entries, generated[i].Aliases, moved));
+                }
+            }
+            // A table every entry moved out of keeps a class of its own, holding only their former names.
+            foreach (KeyValuePair<string, List<KeysScriptMovedEntry>> former in movedFrom)
+            {
+                tables.Add(new KeysScriptTable(former.Key, Array.Empty<KeysScriptEntry>(), null, former.Value));
             }
             return new KeysScript(Name, ResolveNamespace(), languages, tables);
         }

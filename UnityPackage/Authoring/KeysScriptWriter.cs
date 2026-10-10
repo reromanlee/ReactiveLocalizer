@@ -144,7 +144,7 @@ namespace reromanlee.ReactiveLocalizer.Authoring
             for (int i = 0; i < messages.Count; i++)
             {
                 AppendLine(builder, string.Empty);
-                AppendMessageMethod(builder, member, messages[i], messages[i].Name, null);
+                AppendMessageMethod(builder, member, messages[i], messages[i].Name, null, MessageKeyField(messages[i].Name));
             }
 
             List<KeyValuePair<string, string>> aliases = new(table.Aliases);
@@ -167,7 +167,7 @@ namespace reromanlee.ReactiveLocalizer.Authoring
                 AppendLine(builder, $"{member}[global::System.Obsolete(\"Renamed to {target}.\")]");
                 if (targetEntry.HasArguments)
                 {
-                    AppendMessageMethod(builder, member, targetEntry, alias, targetEntry.Name);
+                    AppendMessageMethod(builder, member, targetEntry, alias, CSharpNames.ToIdentifier(targetEntry.Name), null);
                 }
                 else
                 {
@@ -175,8 +175,39 @@ namespace reromanlee.ReactiveLocalizer.Authoring
                 }
             }
 
+            // A moved entry keeps its former name here, building its key directly, so it compiles whether or not the
+            // table it moved to generates code.
+            List<KeysScriptMovedEntry> moved = new(table.MovedEntries);
+            moved.Sort((left, right) => CompareNames(left.FormerName, right.FormerName));
+            List<KeysScriptMovedEntry> movedMessages = new();
+            for (int i = 0; i < moved.Count; i++)
+            {
+                KeysScriptMovedEntry entry = moved[i];
+                if (!IsUsableMember(entry.FormerName, table.Name, problems, $"The moved entry '{table.Name}.{entry.FormerName}'"))
+                {
+                    continue;
+                }
+                if (written.ContainsKey(entry.FormerName) || !aliasNames.Add(entry.FormerName))
+                {
+                    Report(problems, $"The moved entry '{table.Name}.{entry.FormerName}' gets no generated key: an entry or alias of the table has its name.");
+                    continue;
+                }
+                string movedTo = $"{entry.TableName}.{entry.Entry.Name}";
+                AppendLine(builder, string.Empty);
+                AppendLine(builder, $"{member}[global::System.Obsolete(\"Moved to {movedTo}.\")]");
+                if (entry.Entry.HasArguments)
+                {
+                    AppendMessageMethod(builder, member, entry.Entry, entry.FormerName, null, MessageKeyField(entry.FormerName));
+                    movedMessages.Add(entry);
+                }
+                else
+                {
+                    AppendLine(builder, $"{member}public static readonly {EntryKeyType} {CSharpNames.ToIdentifier(entry.FormerName)} = new(\"{entry.TableName}\", \"{entry.Entry.Name}\");");
+                }
+            }
+
             // The keys of message entries are private: their methods hand them out with the arguments.
-            if (messages.Count > 0)
+            if (messages.Count > 0 || movedMessages.Count > 0)
             {
                 AppendLine(builder, string.Empty);
             }
@@ -184,14 +215,19 @@ namespace reromanlee.ReactiveLocalizer.Authoring
             {
                 AppendLine(builder, $"{member}private static readonly {EntryKeyType} {MessageKeyField(messages[i].Name)} = new({TableKeyMember}, \"{messages[i].Name}\");");
             }
+            for (int i = 0; i < movedMessages.Count; i++)
+            {
+                KeysScriptMovedEntry entry = movedMessages[i];
+                AppendLine(builder, $"{member}private static readonly {EntryKeyType} {MessageKeyField(entry.FormerName)} = new(\"{entry.TableName}\", \"{entry.Entry.Name}\");");
+            }
             AppendLine(builder, $"{outer}}}");
         }
 
         /// <summary>
         /// Writes the method of a message entry, named <paramref name="methodName"/>. An alias passes its arguments on to
-        /// <paramref name="forwardTo"/>; an entry creates its message.
+        /// the method <paramref name="forwardTo"/>; anything else creates its message with the key in <paramref name="keyField"/>.
         /// </summary>
-        private static void AppendMessageMethod(StringBuilder builder, string member, KeysScriptEntry entry, string methodName, string forwardTo)
+        private static void AppendMessageMethod(StringBuilder builder, string member, KeysScriptEntry entry, string methodName, string forwardTo, string keyField)
         {
             StringBuilder parameters = new();
             StringBuilder names = new();
@@ -209,7 +245,7 @@ namespace reromanlee.ReactiveLocalizer.Authoring
             AppendLine(builder, $"{member}public static {EntryMessageType} {CSharpNames.ToIdentifier(methodName)}({parameters}) =>");
             if (forwardTo != null)
             {
-                AppendLine(builder, $"{member}{Indent}{CSharpNames.ToIdentifier(forwardTo)}({names});");
+                AppendLine(builder, $"{member}{Indent}{forwardTo}({names});");
                 return;
             }
             StringBuilder arguments = new();
@@ -222,10 +258,9 @@ namespace reromanlee.ReactiveLocalizer.Authoring
                 }
                 arguments.Append($"new {MessageArgumentType}(\"{argument.Name}\", {CSharpNames.ToIdentifier(argument.Name)})");
             }
-            string key = MessageKeyField(entry.Name);
             AppendLine(builder, entry.Arguments.Count <= InlineArgumentCapacity
-                ? $"{member}{Indent}new({key}, {arguments});"
-                : $"{member}{Indent}new({key}, new {MessageArgumentType}[] {{ {arguments} }});");
+                ? $"{member}{Indent}new({keyField}, {arguments});"
+                : $"{member}{Indent}new({keyField}, new {MessageArgumentType}[] {{ {arguments} }});");
         }
 
         /// <summary>The private field of a message entry's key; entry names never start with an underscore, so it can't clash.</summary>
