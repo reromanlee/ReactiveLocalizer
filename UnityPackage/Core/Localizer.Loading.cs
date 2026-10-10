@@ -313,7 +313,7 @@ namespace reromanlee.ReactiveLocalizer
             {
                 formats[l] = _catalog.GetFormat(chain[l]);
             }
-            LocalizerState state = new(_state.Version + 1, languageSwitch.Target, chain, formats, stateTables);
+            LocalizerState state = new(_state.Version + 1, languageSwitch.Target, chain, formats, stateTables, _catalog.MovedEntries);
             Volatile.Write(ref _state, state);
             _pendingSwitch = null;
             // On-demand tables still loading in the old language arrived with the switch instead.
@@ -516,13 +516,27 @@ namespace reromanlee.ReactiveLocalizer
             }
         }
 
-        /// <summary>Holds the table of a binding's entry, loading it if it loads on demand. Any thread.</summary>
-        internal void AcquireTable(TableKey table)
+        /// <summary>
+        /// Holds the table of a binding's entry, the one it moved to when it moved, loading it if it loads on demand.
+        /// Returns the hash of the table held, for the binding to release later. Any thread.
+        /// </summary>
+        internal ulong AcquireTableOf(in EntryKey key)
         {
+            TableKey table = GetCurrentTable(in key);
             if (!table.IsEmpty && _holds.Acquire(table))
             {
                 OnTableAcquired(table.Hash);
             }
+            return table.Hash;
+        }
+
+        /// <summary>Returns the table <paramref name="key"/>'s entry is in now: the one it moved to, or its own.</summary>
+        internal TableKey GetCurrentTable(in EntryKey key)
+        {
+            CatalogInfo catalog = Catalog;
+            return catalog != null && !key.IsEmpty && catalog.MovedEntries.TryGetValue((key.Table.Hash, key.Hash), out EntryKey moved)
+                ? moved.Table
+                : key.Table;
         }
 
         /// <summary>Releases the table of a binding's entry. Any thread.</summary>
@@ -552,12 +566,22 @@ namespace reromanlee.ReactiveLocalizer
             return catalog != null && !catalog.TryGetTable(tableHash, out _) ? false : null;
         }
 
-        /// <summary>Whether the table with <paramref name="tableHash"/> loads on demand and isn't loaded in <paramref name="state"/>.</summary>
-        private bool IsAwaitingTable(LocalizerState state, ulong tableHash)
+        /// <summary>
+        /// Whether the entry's table, the one it moved to when it moved, loads on demand and isn't loaded in
+        /// <paramref name="state"/>.
+        /// </summary>
+        private bool IsAwaitingTable(LocalizerState state, ulong tableHash, ulong entryHash)
         {
             CatalogInfo catalog = Catalog;
-            return catalog != null && !state.HasTable(tableHash) && catalog.TryGetTable(tableHash, out TableInfo table) &&
-                table.Loading == TableLoading.OnDemand;
+            if (catalog == null)
+            {
+                return false;
+            }
+            if (catalog.MovedEntries.TryGetValue((tableHash, entryHash), out EntryKey moved))
+            {
+                tableHash = moved.Table.Hash;
+            }
+            return !state.HasTable(tableHash) && catalog.TryGetTable(tableHash, out TableInfo table) && table.Loading == TableLoading.OnDemand;
         }
 
         private void OnTableAcquired(ulong tableHash)

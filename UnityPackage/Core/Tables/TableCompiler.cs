@@ -444,11 +444,21 @@ namespace reromanlee.ReactiveLocalizer.Tables
                         continue;
                     }
                     string alias = attribute.Value;
+                    if (MovedEntries.TryParseQualified(alias, out string formerTable, out string formerEntry))
+                    {
+                        // The former key of an entry moved from another table is the catalog's to resolve; one naming
+                        // this very table is an ordinary alias.
+                        if (Hashing.ComputeNameHash(formerTable) != _table.Hash)
+                        {
+                            continue;
+                        }
+                        alias = formerEntry;
+                    }
                     if (!NameRules.IsValid(alias))
                     {
                         if (isReporting)
                         {
-                            AddIssue(IssueSeverity.Error, attribute.Line, 1, $"'@formerly {alias}' needs the entry's former name: {NameRules.Description}.");
+                            AddIssue(IssueSeverity.Error, attribute.Line, 1, $"'@formerly {alias}' needs the entry's former name, or the table it moved from and its name there, such as 'Shop.Purchase': {NameRules.Description}.");
                         }
                         continue;
                     }

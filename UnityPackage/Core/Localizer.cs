@@ -449,7 +449,7 @@ namespace reromanlee.ReactiveLocalizer
                 ReportIfMessage(table, index, key.Table.Name, key.Name);
                 return table.GetString(index);
             }
-            return IsAwaitingTable(state, key.Table.Hash) ? null : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
+            return IsAwaitingTable(state, key.Table.Hash, key.Hash) ? null : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
         }
 
         /// <summary>
@@ -475,7 +475,7 @@ namespace reromanlee.ReactiveLocalizer
                 characters = table.GetMemory(index);
                 return true;
             }
-            if (IsAwaitingTable(state, key.Table.Hash))
+            if (IsAwaitingTable(state, key.Table.Hash, key.Hash))
             {
                 return false;
             }
@@ -498,7 +498,7 @@ namespace reromanlee.ReactiveLocalizer
             }
             if (!state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out int languageIndex))
             {
-                if (IsAwaitingTable(state, key.Table.Hash))
+                if (IsAwaitingTable(state, key.Table.Hash, key.Hash))
                 {
                     return false;
                 }
@@ -571,7 +571,7 @@ namespace reromanlee.ReactiveLocalizer
             }
             if (!state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out int languageIndex))
             {
-                return isForBinding && IsAwaitingTable(state, key.Table.Hash)
+                return isForBinding && IsAwaitingTable(state, key.Table.Hash, key.Hash)
                     ? null
                     : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
             }
@@ -676,7 +676,7 @@ namespace reromanlee.ReactiveLocalizer
         /// </summary>
         private string GetMissingMarker(LocalizerState state, ReadOnlySpan<char> tableName, ReadOnlySpan<char> entryName, ulong tableHash, ulong entryHash)
         {
-            if (IsAwaitingTable(state, tableHash))
+            if (IsAwaitingTable(state, tableHash, entryHash))
             {
                 if (_reportedProblems.TryAdd(tableHash, 0, 6))
                 {

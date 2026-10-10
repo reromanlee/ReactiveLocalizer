@@ -56,14 +56,36 @@ namespace reromanlee.ReactiveLocalizer.Tests
                 new KeysScriptTable("Common", new[]
                 {
                     KeysScriptEntry.FromSource("event", "{class, plural, other {#}} {default}")
-                }, null)
+                }, null),
+                // Every entry of Hud moved to Shop, so Hud keeps only their former names.
+                new KeysScriptTable("Hud", Array.Empty<KeysScriptEntry>(), null, new[]
+                {
+                    new KeysScriptMovedEntry("Buy", "Shop", new KeysScriptEntry("Purchase")),
+                    new KeysScriptMovedEntry("Balance", "Shop", KeysScriptEntry.FromSource("CoinBalance", "You have {coins, plural, one {# coin} other {# coins}}."))
+                })
             });
             List<string> problems = new();
             string generated = KeysScriptWriter.Write(script, problems);
 
             Assert.That(problems, Is.Empty);
-            Assert.That(Compile(generated, Usage), Is.Empty);
+            Assert.That(Compile(generated, Usage, MovedUsage), Is.Empty);
+            Assert.That(generated, Does.Contain("[global::System.Obsolete(\"Moved to Shop.Purchase.\")]"));
         }
+
+        // Moved entries are obsolete on purpose; code still using them compiles, with the warning silenced here.
+        private const string MovedUsage =
+            "#pragma warning disable 0618\n" +
+            "using reromanlee.ReactiveLocalizer;\n" +
+            "using MyGame;\n" +
+            "public static class MovedUsage\n" +
+            "{\n" +
+            "    public static void Use(ILocalizer localizer)\n" +
+            "    {\n" +
+            "        string buy = localizer.Get(LocalizationKeys.Hud.Buy);\n" +
+            "        string balance = localizer.Get(LocalizationKeys.Hud.Balance(coins: 3));\n" +
+            "        TableKey table = LocalizationKeys.Hud.TableKey;\n" +
+            "    }\n" +
+            "}\n";
 
         private static List<string> Compile(params string[] sources)
         {

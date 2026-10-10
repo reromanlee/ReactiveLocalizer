@@ -46,10 +46,10 @@ namespace reromanlee.ReactiveLocalizer.Internal
         public void Add(in EntryKey key, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker, out int index, out int generation)
         {
             // Held before the binding exists, so a table loading within the call can't refresh it before its first text.
-            _localizer.AcquireTable(key.Table);
+            ulong heldTable = _localizer.AcquireTableOf(in key);
             lock (_lockObject)
             {
-                index = AddSlot(in key, target, apply, invoker, characterInvoker, null);
+                index = AddSlot(in key, heldTable, target, apply, invoker, characterInvoker, null);
                 generation = _slots[index].Generation;
             }
         }
@@ -57,12 +57,12 @@ namespace reromanlee.ReactiveLocalizer.Internal
         /// <summary>Adds a binding of a message, which receives text through <paramref name="invoker"/>, or characters through <paramref name="characterInvoker"/>.</summary>
         public void Add(in EntryMessage message, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker, out int index, out int generation)
         {
-            _localizer.AcquireTable(message.Key.Table);
+            ulong heldTable = _localizer.AcquireTableOf(message.Key);
             lock (_lockObject)
             {
                 BoundMessage bound = RentMessage();
                 bound.Value = message;
-                index = AddSlot(message.Key, target, apply, invoker, characterInvoker, bound);
+                index = AddSlot(message.Key, heldTable, target, apply, invoker, characterInvoker, bound);
                 generation = _slots[index].Generation;
             }
         }
@@ -82,7 +82,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 {
                     return false;
                 }
-                tableHash = slot.Key.Table.Hash;
+                tableHash = slot.HeldTable;
                 ReleaseSlot(index);
             }
             _localizer.ReleaseTable(tableHash);
@@ -207,7 +207,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
             }
         }
 
-        private int AddSlot(in EntryKey key, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker, BoundMessage message)
+        private int AddSlot(in EntryKey key, ulong heldTable, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker, BoundMessage message)
         {
             int index;
             if (_freeHead >= 0)
@@ -229,6 +229,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
             slot.HasText = false;
             slot.NextFree = -1;
             slot.Key = key;
+            slot.HeldTable = heldTable;
             slot.Target = target;
             slot.Apply = apply;
             slot.Invoker = invoker;
@@ -244,6 +245,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
             slot.IsActive = false;
             slot.Generation++;
             slot.Key = default;
+            slot.HeldTable = 0;
             slot.Target = null;
             slot.Apply = null;
             slot.Invoker = null;
@@ -274,14 +276,11 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 {
                     return;
                 }
-                previousTable = slot.Key.Table.Hash;
+                previousTable = slot.HeldTable;
             }
             // A message from another table holds that table instead, outside the lock, as holding may load it.
-            bool isOtherTable = previousTable != message.Key.Table.Hash;
-            if (isOtherTable)
-            {
-                _localizer.AcquireTable(message.Key.Table);
-            }
+            bool isOtherTable = previousTable != _localizer.GetCurrentTable(message.Key).Hash;
+            ulong heldTable = isOtherTable ? _localizer.AcquireTableOf(message.Key) : previousTable;
             lock (_lockObject)
             {
                 if (!IsActiveLocked(index, generation))
@@ -289,7 +288,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
                     // Released meanwhile, along with what it held.
                     if (isOtherTable)
                     {
-                        _localizer.ReleaseTable(message.Key.Table.Hash);
+                        _localizer.ReleaseTable(heldTable);
                     }
                     return;
                 }
@@ -297,6 +296,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
                 slot.Message ??= RentMessage();
                 slot.Message.Value = message;
                 slot.Key = message.Key;
+                slot.HeldTable = heldTable;
             }
             if (isOtherTable)
             {
@@ -432,6 +432,8 @@ namespace reromanlee.ReactiveLocalizer.Internal
             public bool HasText;
             public int NextFree;
             public EntryKey Key;
+            // The table the binding holds: its entry's, or the one the entry moved to.
+            public ulong HeldTable;
             public object Target;
             public Delegate Apply;
             public BindingInvoker Invoker;
