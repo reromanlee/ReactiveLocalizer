@@ -15,7 +15,7 @@
         {
             "name": "com.unity.modules.unitywebrequest",
             "expression": "",
-            "define": "REACTIVELOCALIZER_WEB_REQUEST"
+            "define": "REACTIVE_LOCALIZER_WEB_REQUEST"
         }
     ],
     "noEngineReferences": false

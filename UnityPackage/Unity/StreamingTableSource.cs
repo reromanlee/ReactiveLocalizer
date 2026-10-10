@@ -5,7 +5,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using UnityEngine;
-#if REACTIVELOCALIZER_WEB_REQUEST
+#if REACTIVE_LOCALIZER_WEB_REQUEST
 using UnityEngine.Networking;
 #endif
 
@@ -139,7 +139,7 @@ namespace reromanlee.ReactiveLocalizer.Unity
 
         private static void LoadFromUrl(string url, TableReceiver receiver)
         {
-#if REACTIVELOCALIZER_WEB_REQUEST
+#if REACTIVE_LOCALIZER_WEB_REQUEST
             UnityWebRequest request = UnityWebRequest.Get(url);
             request.SendWebRequest().completed += _ =>
             {
