@@ -148,12 +148,96 @@ namespace reromanlee.ReactiveLocalizer
             {
                 Report(ReportSeverity.Warning, $"While loading {receiver.Request}: {warnings[i]}");
             }
+            if (receiver.Request.IsCatalog && receiver.Context == ReloadContext)
+            {
+                ProcessReloadedCatalog(receiver);
+                return;
+            }
             if (receiver.Request.IsCatalog)
             {
                 ProcessCatalog(receiver);
                 return;
             }
             _loader.OnReceived(receiver);
+        }
+
+        // Marks the catalog request of a reload, so its answer replaces the catalog instead of initializing.
+        private static readonly object ReloadContext = new();
+
+        /// <summary>
+        /// Loads the catalog and every loaded table again, as after their files changed in the editor, and applies them
+        /// in one step, so bound text shows the edit right away. Nothing happens before initialization, which reads the
+        /// files as they are anyway.
+        /// </summary>
+        internal void Reload()
+        {
+            if (!IsDisposed)
+            {
+                RunOnHost(BeginReload);
+            }
+        }
+
+        /// <summary>Reloads every localizer not yet disposed, as the editor does once table or catalog files changed.</summary>
+        internal static void ReloadAll()
+        {
+            List<Localizer> localizers = new();
+            LiveLocalizers.CopyTo(localizers);
+            for (int i = 0; i < localizers.Count; i++)
+            {
+                localizers[i].Reload();
+            }
+        }
+
+        private void BeginReload()
+        {
+            if (IsDisposed || _catalog == null)
+            {
+                return;
+            }
+            TableRequest request = TableRequest.ForCatalog(CatalogKey);
+            if (!TryLoadCatalog(in request, new TableReceiver(request, _onReceived, ReloadContext)))
+            {
+                Report(ReportSeverity.Warning, $"No table source has {request} anymore, so the localizer keeps what it loaded.");
+            }
+        }
+
+        private void ProcessReloadedCatalog(TableReceiver receiver)
+        {
+            if (_catalog == null)
+            {
+                return;
+            }
+            string error = receiver.FailureReason;
+            if (!receiver.HasData || !CompiledCatalog.TryRead(receiver.Data.Span, out CatalogInfo catalog, out error) || catalog.Key != CatalogKey)
+            {
+                Report(ReportSeverity.Warning, $"Couldn't reload {receiver.Request}, so the localizer keeps what it loaded: {error ?? "it was another catalog."}");
+                return;
+            }
+            PublishCatalog(AddRegisteredLanguages(catalog));
+            // Everything loaded is read again; loads still in progress were started from the old files.
+            _loader.Clear();
+            foreach (ChainLoad load in _onDemandLoads.Values)
+            {
+                load.Cancel();
+            }
+            _onDemandLoads.Clear();
+            LanguageInfo current = _pendingSwitch?.Target ?? _state.Language;
+            LanguageInfo target = current != null && _catalog.TryGetLanguage(current.Key, out LanguageInfo reloaded) ? reloaded : _catalog.SourceLanguage;
+            StartSwitch(target, null, true);
+        }
+
+        /// <summary>Adds the languages registered at runtime to a catalog that just arrived, forgetting any it can't take anymore.</summary>
+        private CatalogInfo AddRegisteredLanguages(CatalogInfo catalog)
+        {
+            for (int i = 0; i < _registeredLanguages.Count; i++)
+            {
+                if (!TryAddLanguage(catalog, _registeredLanguages[i], out catalog))
+                {
+                    _registeredLanguages.RemoveAt(i);
+                    i--;
+                }
+            }
+            return catalog;
         }
 
         private void ProcessCatalog(TableReceiver receiver)
@@ -176,11 +260,7 @@ namespace reromanlee.ReactiveLocalizer
                 FailInitialization();
                 return;
             }
-            for (int i = 0; i < _pendingLanguages.Count; i++)
-            {
-                TryAddLanguage(catalog, _pendingLanguages[i], out catalog);
-            }
-            _pendingLanguages.Clear();
+            catalog = AddRegisteredLanguages(catalog);
             PublishCatalog(catalog);
 
             LanguageInfo start = catalog.SourceLanguage;
@@ -223,12 +303,15 @@ namespace reromanlee.ReactiveLocalizer
         /// <summary>
         /// Starts loading every table the localizer keeps in <paramref name="target"/>, along with the fallback
         /// languages each table needs, reusing the tables already loaded. A switch still loading is replaced, and its
-        /// waiters move to this one.
+        /// waiters move to this one. A reload that stays in the current language raises no language events.
         /// </summary>
-        private void StartSwitch(LanguageInfo target, TaskCompletionSource<bool> waiter)
+        private void StartSwitch(LanguageInfo target, TaskCompletionSource<bool> waiter, bool isReload = false)
         {
             LanguageSwitch previous = _pendingSwitch;
-            LanguageSwitch languageSwitch = new(target, _catalog.GetFallbackChain(target));
+            LanguageSwitch languageSwitch = new(target, _catalog.GetFallbackChain(target))
+            {
+                IsLanguageChange = !isReload || _state.Language == null || _state.Language.Key != target.Key
+            };
             if (waiter != null)
             {
                 languageSwitch.Waiters.Add(waiter);
@@ -242,7 +325,10 @@ namespace reromanlee.ReactiveLocalizer
                 previous.Waiters.Clear();
             }
             _pendingSwitch = languageSwitch;
-            RaiseLanguageEvent(LanguageChanging, target);
+            if (languageSwitch.IsLanguageChange)
+            {
+                RaiseLanguageEvent(LanguageChanging, target);
+            }
 
             // One extra outstanding count is held while the loads start, so that sources answering synchronously
             // can't apply the switch before the last load has started.
@@ -325,7 +411,10 @@ namespace reromanlee.ReactiveLocalizer
             _loader.Prune(_isLoadedTableNeeded);
 
             _bindings.RefreshAll();
-            RaiseLanguageEvent(LanguageChanged, languageSwitch.Target);
+            if (languageSwitch.IsLanguageChange)
+            {
+                RaiseLanguageEvent(LanguageChanged, languageSwitch.Target);
+            }
             _holds.CompleteLoaded(_getLoadedResult);
             for (int i = 0; i < languageSwitch.Waiters.Count; i++)
             {
@@ -757,11 +846,12 @@ namespace reromanlee.ReactiveLocalizer
             }
             if (_catalog == null)
             {
-                _pendingLanguages.Add(language);
+                _registeredLanguages.Add(language);
                 return;
             }
             if (TryAddLanguage(_catalog, language, out CatalogInfo catalog))
             {
+                _registeredLanguages.Add(language);
                 PublishCatalog(catalog);
             }
         }

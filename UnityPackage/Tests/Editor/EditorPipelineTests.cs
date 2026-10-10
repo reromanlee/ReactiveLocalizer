@@ -3,6 +3,7 @@ using reromanlee.ReactiveLocalizer.Authoring;
 using reromanlee.ReactiveLocalizer.Editor;
 using reromanlee.ReactiveLocalizer.Tables;
 using reromanlee.ReactiveLocalizer.Unity;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -226,6 +227,26 @@ namespace reromanlee.ReactiveLocalizer.Tests
             LogAssert.Expect(LogType.Error, new Regex(@"Holder\.asset \(EntryHolder\.Entry\): error: It refers to 'Shop\.Refund', which doesn't exist"));
 
             Assert.That(() => new ValidationBuildStep().OnPreprocessBuild(null), Throws.TypeOf<UnityEditor.Build.BuildFailedException>());
+        }
+
+        [UnityTest]
+        public IEnumerator EditingAFile_UpdatesBoundTextLive()
+        {
+            Localizer localizer = new(new CatalogKey("Game"), new UnityHost());
+            localizer.InitializeAsync();
+            List<string> texts = new();
+            TextBinding binding = localizer.Bind(Purchase, texts, static (list, text) => list.Add(text));
+
+            File.WriteAllText($"{Folder}/Shop.English.lang", "# Buys the selected item.\n@formerly BuyButton\nPurchase = Buy now\nTitle = Shop\n" + EnglishBalance);
+            AssetDatabase.ImportAsset($"{Folder}/Shop.English.lang", ImportAssetOptions.ForceSynchronousImport);
+            for (int frame = 0; frame < 100 && texts.Count < 2; frame++)
+            {
+                yield return null;
+            }
+
+            Assert.That(texts, Is.EqualTo(new[] { "Buy", "Buy now" }));
+            binding.Dispose();
+            localizer.Dispose();
         }
 
         private static CompiledTable Read(string path)

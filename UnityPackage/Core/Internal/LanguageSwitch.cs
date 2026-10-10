@@ -29,6 +29,12 @@ namespace reromanlee.ReactiveLocalizer.Internal
         /// <summary>Loads not yet done, plus one while loads are still being started.</summary>
         public int Outstanding { get; set; }
 
+        /// <summary>
+        /// Whether applying the switch changes the language, which raises the language events; false for a reload that
+        /// stays in the current language.
+        /// </summary>
+        public bool IsLanguageChange { get; set; } = true;
+
         /// <summary>Whether a newer switch replaced this one, so its loads are no longer awaited.</summary>
         public bool IsSuperseded { get; private set; }
 

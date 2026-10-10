@@ -52,8 +52,8 @@ namespace reromanlee.ReactiveLocalizer
         // Tables nothing held at the last update; they unload at the next one unless something holds them again.
         private readonly List<ulong> _releasedTables = new();
         private readonly List<TableKey> _heldTables = new();
-        // Languages registered before the catalog arrived, added as soon as it does.
-        private readonly List<LanguageInfo> _pendingLanguages = new();
+        // Every language registered at runtime, added again whenever the catalog arrives, as after a reload.
+        private readonly List<LanguageInfo> _registeredLanguages = new();
         private CatalogInfo _catalog;
         private LanguageSwitch _pendingSwitch;
         private LanguageKey _startingLanguage;
@@ -85,6 +85,7 @@ namespace reromanlee.ReactiveLocalizer
             _isLoadedTableNeeded = IsLoadedTableNeeded;
             _getLoadedResult = GetLoadedResult;
             _loader = new TableLoader(host, _onReceived, (severity, message) => Report(severity, message));
+            LiveLocalizers.Add(this);
         }
 
         /// <inheritdoc/>
@@ -173,6 +174,7 @@ namespace reromanlee.ReactiveLocalizer
             {
                 return;
             }
+            LiveLocalizers.Remove(this);
             _bindings.Clear();
             _holds.Clear();
             Volatile.Write(ref _state, LocalizerState.Empty);
