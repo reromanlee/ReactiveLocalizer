@@ -48,7 +48,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 errors += validation.ErrorCount;
                 if (catalog.Info != null)
                 {
-                    resolvers[catalog.Name] = LocalizationValidation.CreateResolver(catalog);
+                    resolvers[catalog.Name] = catalog.Resolver;
                 }
             }
             errors += LocalizationValidation.ReportUnknownCatalogs(resources);

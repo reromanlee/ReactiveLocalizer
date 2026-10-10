@@ -87,17 +87,6 @@ namespace reromanlee.ReactiveLocalizer.Editor
             return CatalogValidator.Validate(catalog.Info, tables, uses, options);
         }
 
-        /// <summary>Returns the resolver of the references into <paramref name="catalog"/>, as the build checks each scene with.</summary>
-        public static KeyResolver CreateResolver(IndexedCatalog catalog)
-        {
-            List<(string TableName, TableDocument Source)> sources = new(catalog.Tables.Count);
-            foreach (IndexedTable table in catalog.Tables)
-            {
-                sources.Add((table.Name, table.SourceDocument));
-            }
-            return new KeyResolver(sources);
-        }
-
         /// <summary>Whether <paramref name="found"/> refers to <paramref name="catalog"/>: by its name, or by none when it is the default catalog.</summary>
         public static bool IsReferenceTo(IndexedCatalog catalog, EntryReferenceScanner.FoundReference found)
         {

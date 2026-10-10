@@ -17,6 +17,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
     {
         private readonly Dictionary<ulong, IndexedTable> _tables = new();
         private readonly List<IndexedTable> _tableList = new();
+        private KeyResolver _resolver;
 
         public IndexedCatalog(string path, string name)
         {
@@ -54,6 +55,24 @@ namespace reromanlee.ReactiveLocalizer.Editor
 
         /// <summary>Where the catalog's generated code goes: <c>LocalizationKeys.cs</c> next to the catalog.</summary>
         public string GeneratedCodePath => $"{Folder}/{Name}Keys.cs";
+
+        /// <summary>Tells what references to the catalog's entries find. Built on first use, once per index.</summary>
+        public KeyResolver Resolver
+        {
+            get
+            {
+                if (_resolver == null)
+                {
+                    List<(string TableName, TableDocument Source)> sources = new(_tableList.Count);
+                    for (int i = 0; i < _tableList.Count; i++)
+                    {
+                        sources.Add((_tableList[i].Name, _tableList[i].SourceDocument));
+                    }
+                    _resolver = new KeyResolver(sources);
+                }
+                return _resolver;
+            }
+        }
 
         public void AddFile(string tableName, string languageName, string assetPath)
         {
