@@ -34,7 +34,7 @@ namespace reromanlee.ReactiveLocalizer.Authoring.Exchange
 
         /// <summary>
         /// The catalog language the file's texts in this language belong to, or null to skip them.
-        /// Resolving the file's languages against the catalog fills it in, and a person can change it.
+        /// <see cref="ImportPlanner.ResolveLanguages"/> fills it in, and a person can change it.
         /// </summary>
         public string LanguageName { get; set; }
 
