@@ -16,6 +16,9 @@ namespace reromanlee.ReactiveLocalizer.Editor
         /// <summary>Something that works but wants attention, such as a reference by a former name.</summary>
         public static Color Warning => EditorGUIUtility.isProSkin ? new Color(0.93f, 0.73f, 0.3f) : new Color(0.55f, 0.4f, 0f);
 
+        /// <summary>Something new, such as words added to a source text.</summary>
+        public static Color Added => EditorGUIUtility.isProSkin ? new Color(0.45f, 0.82f, 0.45f) : new Color(0.1f, 0.5f, 0.1f);
+
         /// <summary>The outline of popups, which have no window frame of their own.</summary>
         public static Color Border => EditorGUIUtility.isProSkin ? new Color(0.1f, 0.1f, 0.1f) : new Color(0.55f, 0.55f, 0.55f);
 

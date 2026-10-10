@@ -3,6 +3,9 @@ using reromanlee.ReactiveLocalizer.Documents;
 using reromanlee.ReactiveLocalizer.Messages;
 using System;
 using System.Collections.Generic;
+using System.Text;
+using System.Threading.Tasks;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 
@@ -182,8 +185,10 @@ namespace reromanlee.ReactiveLocalizer.Editor
             view.State.style.marginLeft = 6f;
             view.State.style.flexGrow = 1f;
             header.Add(view.State);
+            view.ShowChange = SmallButton("Show source change", "Find the source text this was translated from in git, and compare it with the current one.", () => ShowSourceChange(view, index));
             view.MarkCurrent = SmallButton("Mark as current", "The translation still fits the current source text.", () => _editor.MarkCurrent(_key, index));
             view.Remove = SmallButton("Remove", "Remove the translation, so the fallback language's text shows.", () => _editor.RemoveTranslation(_key, index));
+            header.Add(view.ShowChange);
             header.Add(view.MarkCurrent);
             header.Add(view.Remove);
             _scroll.Add(header);
@@ -211,6 +216,12 @@ namespace reromanlee.ReactiveLocalizer.Editor
             view.Problem.style.whiteSpace = WhiteSpace.Normal;
             view.Problem.style.fontSize = 10f;
             _scroll.Add(view.Problem);
+
+            view.Change = new Label();
+            view.Change.style.whiteSpace = WhiteSpace.Normal;
+            view.Change.style.display = DisplayStyle.None;
+            view.Change.style.marginTop = 2f;
+            _scroll.Add(view.Change);
             return view;
         }
 
@@ -231,6 +242,11 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 view.State.text = DescribeState(cell.State, isSource, row.Source != null);
                 view.State.style.color = LocalizationColors.Of(cell.State);
                 view.MarkCurrent.style.display = !isSource && (cell.State == TranslationState.Outdated || cell.State == TranslationState.Unverified) ? DisplayStyle.Flex : DisplayStyle.None;
+                view.ShowChange.style.display = cell.State == TranslationState.Outdated ? DisplayStyle.Flex : DisplayStyle.None;
+                if (cell.State != TranslationState.Outdated)
+                {
+                    view.Change.style.display = DisplayStyle.None;
+                }
                 view.Remove.style.display = (!isSource || row.Source == null) && cell.Text != null ? DisplayStyle.Flex : DisplayStyle.None;
                 view.Problem.text = cell.Message ?? string.Empty;
                 view.Problem.style.display = cell.Message != null ? DisplayStyle.Flex : DisplayStyle.None;
@@ -335,6 +351,63 @@ namespace reromanlee.ReactiveLocalizer.Editor
             }
         }
 
+        /// <summary>Looks up the source text the translation in <paramref name="language"/> was made from, and shows what changed since.</summary>
+        private void ShowSourceChange(LanguageView view, int language)
+        {
+            TableSheetRow row = _sheet?.Find(_key);
+            TableFile file = _sheet?.Edit.Files.Get(_sheet.Languages[language].Name);
+            if (row?.Source == null || file == null || !file.TryGetEntry(_key, out TableFileEntry translation) || !translation.HasFingerprint)
+            {
+                return;
+            }
+            string key = _key;
+            string current = row.Source.Value;
+            string physicalPath = FileUtil.GetPhysicalPath(_sheet.Edit.GetPath(_sheet.Languages[0].Name));
+            view.Change.text = "Looking for the source text it was translated from\u2026";
+            view.Change.style.color = LocalizationColors.Muted;
+            view.Change.style.display = DisplayStyle.Flex;
+            SourceHistory.FindAsync(physicalPath, key, translation.Fingerprint).ContinueWith(search =>
+            {
+                // The pane may show another entry by now, or be gone.
+                if (view.Change.panel == null || key != _key)
+                {
+                    return;
+                }
+                (string text, string problem) = search.IsFaulted ? (null, "Looking it up failed: " + search.Exception?.GetBaseException().Message) : search.Result;
+                view.Change.style.color = text == null ? new StyleColor(LocalizationColors.Muted) : new StyleColor(StyleKeyword.Null);
+                view.Change.text = text == null ? problem : DescribeChange(text, current);
+            }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        /// <summary>Writes the old source text with its removed words marked, then the current one with its added words marked.</summary>
+        private static string DescribeChange(string before, string after)
+        {
+            List<TextDiffPart> parts = TextDiff.Compare(before, after);
+            string removed = ColorUtility.ToHtmlStringRGB(LocalizationColors.Problem);
+            string added = ColorUtility.ToHtmlStringRGB(LocalizationColors.Added);
+            StringBuilder then = new("Translated from:  ");
+            StringBuilder now = new("Source now:  ");
+            for (int i = 0; i < parts.Count; i++)
+            {
+                // Rich text reads '<' as a tag, so the texts show it as a look-alike.
+                string text = parts[i].Text.Replace('<', '\u2039');
+                switch (parts[i].Kind)
+                {
+                    case TextDiffKind.Removed:
+                        then.Append("<b><color=#").Append(removed).Append('>').Append(text).Append("</color></b>");
+                        break;
+                    case TextDiffKind.Added:
+                        now.Append("<b><color=#").Append(added).Append('>').Append(text).Append("</color></b>");
+                        break;
+                    default:
+                        then.Append(text);
+                        now.Append(text);
+                        break;
+                }
+            }
+            return then.Append('\n').Append(now).ToString();
+        }
+
         private static string DescribeState(TranslationState state, bool isSource, bool hasSource)
         {
             return state switch
@@ -421,6 +494,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
         private sealed class LanguageView
         {
             public Label State;
+            public Button ShowChange;
+            public Label Change;
             public Button MarkCurrent;
             public Button Remove;
             public TextField Editor;
