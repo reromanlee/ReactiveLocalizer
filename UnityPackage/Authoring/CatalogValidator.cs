@@ -54,7 +54,10 @@ namespace reromanlee.ReactiveLocalizer.Authoring
             if (uses != null)
             {
                 ValidateUses(known, uses, issues);
-                ReportUnusedAliases(known, issues);
+                if (options.IsCheckingUnusedAliases)
+                {
+                    ReportUnusedAliases(known, issues);
+                }
             }
             return new ValidationReport(issues);
         }

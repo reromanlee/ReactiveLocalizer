@@ -191,6 +191,43 @@ namespace reromanlee.ReactiveLocalizer.Tests
             }
         }
 
+        [Test]
+        public void Validate_FindsBrokenAndRenamedReferencesInAssets()
+        {
+            EntryHolder holder = ScriptableObject.CreateInstance<EntryHolder>();
+            holder.Entry = new EntryReference("Game", "Shop", "Purchse");
+            holder.Entries.Add(new EntryReference("Game", "Shop", "BuyButton"));
+            holder.Entries.Add(new EntryReference("Game", "Shop", "Title"));
+            AssetDatabase.CreateAsset(holder, $"{Folder}/Holder.asset");
+
+            List<EntryReferenceScanner.FoundReference> found = EntryReferenceScanner.Scan(new[] { $"{Folder}/Holder.asset" });
+            ValidationReport report = LocalizationValidation.Validate(CatalogIndex.Find(new CatalogKey("Game")), found, true);
+            List<string> lines = new();
+            foreach (ValidationIssue issue in report.Issues)
+            {
+                lines.Add(issue.ToString());
+            }
+
+            Assert.That(found.Count, Is.EqualTo(3));
+            Assert.That(found[0].Location, Is.EqualTo($"{Folder}/Holder.asset (EntryHolder.Entry)"));
+            Assert.That(lines, Has.Some.EqualTo($"{Folder}/Holder.asset (EntryHolder.Entry): error: It refers to 'Shop.Purchse', which doesn't exist. Did you mean 'Shop.Purchase'?"));
+            Assert.That(lines, Has.Some.StartsWith($"{Folder}/Holder.asset (EntryHolder.Entries.Array.data[0]): warning: It refers to 'Shop.BuyButton' by the entry's former name"));
+            Assert.That(report.ErrorCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void BuildGate_FailsOnAReferenceToAMissingKeyInResources()
+        {
+            Directory.CreateDirectory($"{Folder}/Resources");
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            EntryHolder holder = ScriptableObject.CreateInstance<EntryHolder>();
+            holder.Entry = new EntryReference("Game", "Shop", "Refund");
+            AssetDatabase.CreateAsset(holder, $"{Folder}/Resources/Holder.asset");
+            LogAssert.Expect(LogType.Error, new Regex(@"Holder\.asset \(EntryHolder\.Entry\): error: It refers to 'Shop\.Refund', which doesn't exist"));
+
+            Assert.That(() => new ValidationBuildStep().OnPreprocessBuild(null), Throws.TypeOf<UnityEditor.Build.BuildFailedException>());
+        }
+
         private static CompiledTable Read(string path)
         {
             TableAsset asset = AssetDatabase.LoadAssetAtPath<TableAsset>(path);
@@ -240,12 +277,31 @@ namespace reromanlee.ReactiveLocalizer.Tests
         [Test]
         public void ImportProblems_AreReportedAtTheirLine()
         {
-            LogAssert.Expect(LogType.Error, new Regex(@"Shop\.English\.lang\(2,1\): error: 'Broken Line' can't start a line|Shop\.English\.lang\(2,8\): error: Expected '='"));
-            // Without Balance in the source, the Russian Balance is an orphan, reported when Russian is checked again.
-            LogAssert.Expect(LogType.Error, new Regex(@"Shop\.Russian\.lang\(2,1\): error: 'Balance' isn't a key of the source language"));
+            List<string> errors = new();
+            void Collect(string message, string stackTrace, LogType type)
+            {
+                if (type == LogType.Error)
+                {
+                    errors.Add(message);
+                }
+            }
             File.WriteAllText($"{Folder}/Shop.English.lang", "Purchase = Buy\nBroken Line\n");
+            // The two files report in whichever order their imports finish, so the errors are checked as a set.
+            LogAssert.ignoreFailingMessages = true;
+            Application.logMessageReceived += Collect;
+            try
+            {
+                AssetDatabase.ImportAsset($"{Folder}/Shop.English.lang", ImportAssetOptions.ForceSynchronousImport);
+            }
+            finally
+            {
+                Application.logMessageReceived -= Collect;
+                LogAssert.ignoreFailingMessages = false;
+            }
 
-            AssetDatabase.ImportAsset($"{Folder}/Shop.English.lang", ImportAssetOptions.ForceSynchronousImport);
+            Assert.That(errors, Has.Some.Match(@"Shop\.English\.lang\(2,(1|8)\): error: ('Broken Line' can't start a line|Expected '=')"));
+            // Without Balance in the source, the Russian Balance is an orphan, reported when Russian is checked again.
+            Assert.That(errors, Has.Some.Match(@"Shop\.Russian\.lang\(2,1\): error: 'Balance' isn't a key of the source language"));
         }
     }
 }

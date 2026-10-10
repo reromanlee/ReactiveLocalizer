@@ -11,5 +11,11 @@ namespace reromanlee.ReactiveLocalizer.Authoring
         /// <c>MainMenu.PlayButton</c>. Off by default; the naming rule itself is always checked.
         /// </summary>
         public bool IsCheckingPascalCase { get; set; }
+
+        /// <summary>
+        /// Whether former names no reference uses are reported. On by default; a check that sees only some of the
+        /// project's references, as a build does, turns it off.
+        /// </summary>
+        public bool IsCheckingUnusedAliases { get; set; } = true;
     }
 }
