@@ -15,7 +15,8 @@ namespace reromanlee.ReactiveLocalizer.Tables
     /// Every value is an ICU message. A value without arguments is stored as its text, with ICU's quoting resolved; a
     /// value with arguments is stored compiled. A message with errors is reported at its line and column: a source
     /// language keeps its text as written so the entry still shows, and a translation leaves the entry out so it shows
-    /// in its fallback language instead.
+    /// in its fallback language instead. A translation checked against its source text also leaves out orphans: keys
+    /// the source text doesn't have, reported with the key they most likely misspell.
     /// </remarks>
     public static class TableCompiler
     {
@@ -155,6 +156,11 @@ namespace reromanlee.ReactiveLocalizer.Tables
                         continue;
                     }
                     names.Add(hash, entry.Key);
+                    if (_source != null && !_source.TryGetEntry(hash, out _))
+                    {
+                        ReportOrphan(entry);
+                        continue;
+                    }
                     if (TryCompileEntry(entry, out string text, out ParsedMessage message))
                     {
                         compiled.Add(new CompiledEntry(hash, entry, text, message));
@@ -405,6 +411,23 @@ namespace reromanlee.ReactiveLocalizer.Tables
                     }
                 }
                 return isMatching;
+            }
+
+            /// <summary>Reports a key the source text doesn't have, suggesting the missing source key it most likely misspells.</summary>
+            private void ReportOrphan(TableDocumentEntry entry)
+            {
+                List<string> missing = new();
+                IReadOnlyList<TableDocumentEntry> sourceEntries = _sourceDocument.Entries;
+                for (int i = 0; i < sourceEntries.Count; i++)
+                {
+                    if (!_document.TryGetEntry(sourceEntries[i].Key, out _))
+                    {
+                        missing.Add(sourceEntries[i].Key);
+                    }
+                }
+                string suggestion = NameDistance.FindClosest(entry.Key, missing);
+                string hint = suggestion != null ? $" Did you mean '{suggestion}'?" : " Rename it to a key of the source text, or delete it.";
+                AddIssue(IssueSeverity.Error, entry.Line, 1, $"'{entry.Key}' isn't a key of the source language, so it is left out of {_language.Name}.{hint}");
             }
 
             private void ReportLeftOut(TableDocumentEntry entry)
