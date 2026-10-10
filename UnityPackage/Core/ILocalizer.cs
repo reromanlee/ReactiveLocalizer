@@ -141,6 +141,31 @@ namespace reromanlee.ReactiveLocalizer
         TextBinding Bind<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, string> apply) where TTarget : class;
 
         /// <summary>
+        /// Calls <paramref name="apply"/> with the characters of <paramref name="key"/>'s text right away, and again
+        /// every time it changes, until the returned binding is disposed. No string is ever created, for consumers that
+        /// copy characters, such as TextMeshPro's <c>SetCharArray</c>.
+        /// </summary>
+        /// <remarks>
+        /// The characters are valid only during the call; copy them to keep them. Pass them on with
+        /// <c>MemoryMarshal.TryGetArray</c> where an array is needed. Behaves like
+        /// <see cref="Bind{TTarget}(in EntryKey, TTarget, Action{TTarget, string})"/> otherwise.
+        /// </remarks>
+        /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="apply"/> is null.</exception>
+        TextBinding BindCharacters<TTarget>(in EntryKey key, TTarget target, Action<TTarget, ReadOnlyMemory<char>> apply) where TTarget : class;
+
+        /// <summary>
+        /// Calls <paramref name="apply"/> with the characters of <paramref name="message"/> right away, and again every
+        /// time they change, until the returned binding is disposed. Messages are formatted into a buffer the binding
+        /// reuses, so updating allocates nothing at all.
+        /// </summary>
+        /// <remarks>
+        /// The characters are valid only during the call; copy them to keep them. Behaves like
+        /// <see cref="Bind{TTarget}(in EntryMessage, TTarget, Action{TTarget, string})"/> otherwise.
+        /// </remarks>
+        /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="apply"/> is null.</exception>
+        TextBinding BindCharacters<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, ReadOnlyMemory<char>> apply) where TTarget : class;
+
+        /// <summary>
         /// Keeps <paramref name="table"/> loaded until the returned handle is disposed. A table set to
         /// <c>@loading OnDemand</c> starts loading now, in the current language and the fallbacks it needs, and follows
         /// every language switch while held; await <see cref="TableHandle.WhenLoaded"/> before reading it.

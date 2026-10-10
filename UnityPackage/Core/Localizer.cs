@@ -311,28 +311,44 @@ namespace reromanlee.ReactiveLocalizer
         // Bindings.
 
         /// <inheritdoc/>
-        public TextBinding Bind<TTarget>(in EntryKey key, TTarget target, Action<TTarget, string> apply) where TTarget : class
+        public TextBinding Bind<TTarget>(in EntryKey key, TTarget target, Action<TTarget, string> apply) where TTarget : class =>
+            Bind(in key, target, apply, BindingInvokers<TTarget>.Invoker, null);
+
+        /// <inheritdoc/>
+        public TextBinding Bind<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, string> apply) where TTarget : class =>
+            Bind(in message, target, apply, BindingInvokers<TTarget>.Invoker, null);
+
+        /// <inheritdoc/>
+        public TextBinding BindCharacters<TTarget>(in EntryKey key, TTarget target, Action<TTarget, ReadOnlyMemory<char>> apply) where TTarget : class =>
+            Bind(in key, target, apply, null, BindingInvokers<TTarget>.CharacterInvoker);
+
+        /// <inheritdoc/>
+        public TextBinding BindCharacters<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, ReadOnlyMemory<char>> apply) where TTarget : class =>
+            Bind(in message, target, apply, null, BindingInvokers<TTarget>.CharacterInvoker);
+
+        private TextBinding Bind(in EntryKey key, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker)
         {
-            if (target == null)
+            if (!CanBind(target, apply))
             {
-                throw new ArgumentNullException(nameof(target));
-            }
-            if (apply == null)
-            {
-                throw new ArgumentNullException(nameof(apply));
-            }
-            if (IsDisposed)
-            {
-                ReportDisposedUse();
                 return default;
             }
-            _bindings.Add(in key, target, apply, BindingInvokers<TTarget>.Invoker, out int index, out int generation);
+            _bindings.Add(in key, target, apply, invoker, characterInvoker, out int index, out int generation);
             ApplyBinding(index, generation);
             return new TextBinding(_bindings, index, generation);
         }
 
-        /// <inheritdoc/>
-        public TextBinding Bind<TTarget>(in EntryMessage message, TTarget target, Action<TTarget, string> apply) where TTarget : class
+        private TextBinding Bind(in EntryMessage message, object target, Delegate apply, BindingInvoker invoker, CharacterInvoker characterInvoker)
+        {
+            if (!CanBind(target, apply))
+            {
+                return default;
+            }
+            _bindings.Add(in message, target, apply, invoker, characterInvoker, out int index, out int generation);
+            ApplyBinding(index, generation);
+            return new TextBinding(_bindings, index, generation);
+        }
+
+        private bool CanBind(object target, Delegate apply)
         {
             if (target == null)
             {
@@ -345,11 +361,9 @@ namespace reromanlee.ReactiveLocalizer
             if (IsDisposed)
             {
                 ReportDisposedUse();
-                return default;
+                return false;
             }
-            _bindings.Add(in message, target, apply, BindingInvokers<TTarget>.Invoker, out int index, out int generation);
-            ApplyBinding(index, generation);
-            return new TextBinding(_bindings, index, generation);
+            return true;
         }
 
         /// <summary>
@@ -737,6 +751,83 @@ namespace reromanlee.ReactiveLocalizer
                 return table.GetString(index);
             }
             return IsAwaitingTable(state, key.Table.Hash) ? null : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
+        }
+
+        /// <summary>
+        /// Gives the characters a character binding of <paramref name="key"/> shows right now, or returns false while
+        /// its on-demand table loads, so the binding keeps its text. Host thread only.
+        /// </summary>
+        internal bool TryResolveBindingCharacters(in EntryKey key, ref char[] buffer, out ReadOnlyMemory<char> characters)
+        {
+            characters = ReadOnlyMemory<char>.Empty;
+            LocalizerState state = Volatile.Read(ref _state);
+            if (!state.IsInitialized)
+            {
+                return true;
+            }
+            if (key.IsEmpty)
+            {
+                ReportEmptyKey();
+                return true;
+            }
+            if (state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out _))
+            {
+                ReportIfMessage(table, index, key.Table.Name, key.Name);
+                characters = table.GetMemory(index);
+                return true;
+            }
+            if (IsAwaitingTable(state, key.Table.Hash))
+            {
+                return false;
+            }
+            characters = GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash).AsMemory();
+            return true;
+        }
+
+        /// <summary>
+        /// Formats the message a character binding shows into <paramref name="buffer"/>, which grows when the text
+        /// outgrows it, or returns false while its on-demand table loads. Host thread only.
+        /// </summary>
+        internal bool TryResolveBindingCharacters(in EntryMessage message, ref char[] buffer, out ReadOnlyMemory<char> characters)
+        {
+            characters = ReadOnlyMemory<char>.Empty;
+            LocalizerState state = Volatile.Read(ref _state);
+            EntryKey key = message.Key;
+            if (!state.IsInitialized || key.IsEmpty)
+            {
+                return true;
+            }
+            if (!state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out int languageIndex))
+            {
+                if (IsAwaitingTable(state, key.Table.Hash))
+                {
+                    return false;
+                }
+                characters = GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash).AsMemory();
+                return true;
+            }
+            if (!table.TryGetMessage(index, out int start))
+            {
+                characters = table.GetMemory(index);
+                return true;
+            }
+            TextBuilder output = new(buffer);
+            try
+            {
+                Render(state, table, start, languageIndex, in message, ref output);
+                if (output.HasOutgrownInitialBuffer)
+                {
+                    // The buffer grows once to fit, and every later message of this size formats into it directly.
+                    buffer = new char[Math.Max(output.Length, buffer.Length * 2)];
+                    output.Text.CopyTo(buffer);
+                }
+                characters = new ReadOnlyMemory<char>(buffer, 0, output.Length);
+                return true;
+            }
+            finally
+            {
+                output.Dispose();
+            }
         }
 
         internal bool IsTargetDestroyed(object target)
