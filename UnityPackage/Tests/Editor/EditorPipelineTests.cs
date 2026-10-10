@@ -304,6 +304,19 @@ namespace reromanlee.ReactiveLocalizer.Tests
         }
 
         [Test]
+        public void CreatingEntries_LeavesGeneratedCodeUntilTheEditorLosesFocus()
+        {
+            KeysGenerator.Run();
+            Assert.That(KeysGenerator.IsPending, Is.False);
+
+            Assert.That(EntryAuthoring.TryCreateEntry("Game", "Shop", "Refund", "Return it", out _, out string problem), Is.True, problem);
+
+            Assert.That(KeysGenerator.IsPending, Is.True);
+            KeysGenerator.Run();
+            Assert.That(KeysGenerator.IsPending, Is.False);
+        }
+
+        [Test]
         public void TryCreateEntry_RejectsMissingCatalogsAndInvalidNames()
         {
             Assert.That(EntryAuthoring.TryCreateEntry("Nowhere", "Shop", "Refund", "Text", out _, out string missing), Is.False);

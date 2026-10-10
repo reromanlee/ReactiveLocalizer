@@ -95,6 +95,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 return;
             }
             List<string> deleted = new();
+            using KeysGenerator.DeferralScope deferral = KeysGenerator.Defer();
             AssetDatabase.StartAssetEditing();
             try
             {
