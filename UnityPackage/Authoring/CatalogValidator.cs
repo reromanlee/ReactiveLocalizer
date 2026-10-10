@@ -2,7 +2,6 @@ using reromanlee.ReactiveLocalizer.Documents;
 using reromanlee.ReactiveLocalizer.Tables;
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Text;
 
 namespace reromanlee.ReactiveLocalizer.Authoring
@@ -211,7 +210,7 @@ namespace reromanlee.ReactiveLocalizer.Authoring
                 {
                     continue;
                 }
-                if (!int.TryParse(limitText, NumberStyles.None, CultureInfo.InvariantCulture, out int limit) || limit <= 0)
+                if (!MaximumLength.TryParse(limitText, out int limit))
                 {
                     // Reported once, with the source entry that carries it.
                     if (file == source)
@@ -221,8 +220,7 @@ namespace reromanlee.ReactiveLocalizer.Authoring
                     }
                     continue;
                 }
-                // A message's length depends on its arguments, so only plain text is measured.
-                if (entry.Value.IndexOf('{') < 0 && entry.Value.Length > limit)
+                if (MaximumLength.IsExceededBy(entry.Value, limit))
                 {
                     issues.Add(new ValidationIssue(IssueSeverity.Warning, $"{file.Path}({entry.Line},{entry.GetColumn(0)})",
                         $"'{entry.Key}' is {entry.Value.Length} characters long in {languageName}, over its maximum of {limit}."));
