@@ -3,7 +3,7 @@ using System;
 
 namespace reromanlee.ReactiveLocalizer.Authoring
 {
-    /// <summary>One file of a table, as the validator reads it.</summary>
+    /// <summary>One file of a table, read: what validation and exports work from.</summary>
     public sealed class ValidatedFile
     {
         /// <summary>Creates a file read from <paramref name="path"/>.</summary>
