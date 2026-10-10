@@ -34,7 +34,10 @@ namespace reromanlee.ReactiveLocalizer
         private readonly Action _update;
         private readonly Action<TableReceiver> _onReceived;
         private readonly Action<ChainLoad> _onSwitchTableLoaded;
+        private readonly Action<ChainLoad> _onDemandTableLoaded;
         private readonly Func<ulong, ulong, bool> _isLoadedTableNeeded;
+        private readonly Func<ulong, bool?> _getLoadedResult;
+        private readonly TableHolds _holds = new();
         private readonly object _lockObject = new();
 
         // Published for every thread: lookups read the state, and the catalog is shown once it is loaded.
@@ -45,6 +48,10 @@ namespace reromanlee.ReactiveLocalizer
         // Host thread only.
         private readonly List<TaskCompletionSource<bool>> _initialWaiters = new();
         private readonly TableLoader _loader;
+        private readonly Dictionary<ulong, ChainLoad> _onDemandLoads = new();
+        // Tables nothing held at the last update; they unload at the next one unless something holds them again.
+        private readonly List<ulong> _releasedTables = new();
+        private readonly List<TableKey> _heldTables = new();
         private CatalogInfo _catalog;
         private LanguageSwitch _pendingSwitch;
         private LanguageKey _startingLanguage;
@@ -72,7 +79,9 @@ namespace reromanlee.ReactiveLocalizer
             _update = Update;
             _onReceived = OnReceived;
             _onSwitchTableLoaded = OnSwitchTableLoaded;
+            _onDemandTableLoaded = OnDemandTableLoaded;
             _isLoadedTableNeeded = IsLoadedTableNeeded;
+            _getLoadedResult = GetLoadedResult;
             _loader = new TableLoader(host, _onReceived, (severity, message) => Report(severity, message));
         }
 
@@ -102,6 +111,11 @@ namespace reromanlee.ReactiveLocalizer
 
         /// <summary>How many bindings are active.</summary>
         public int BindingCount => _bindings.ActiveCount;
+
+        /// <summary>The task of a table that can't be loaded or isn't held: already completed, with false.</summary>
+        internal static Task<bool> NotLoaded { get; } = Task.FromResult(false);
+
+        private static Task<bool> Loaded { get; } = Task.FromResult(true);
 
         private bool IsDisposed => Volatile.Read(ref _isDisposed) != 0;
 
@@ -158,6 +172,7 @@ namespace reromanlee.ReactiveLocalizer
                 return;
             }
             _bindings.Clear();
+            _holds.Clear();
             Volatile.Write(ref _state, LocalizerState.Empty);
             TaskCompletionSource<bool> initialization;
             lock (_lockObject)
@@ -202,7 +217,7 @@ namespace reromanlee.ReactiveLocalizer
                 ReportEarlyRead();
                 return string.Empty;
             }
-            return Format(state, in message, true);
+            return Format(state, in message, false);
         }
 
         /// <inheritdoc/>
@@ -359,6 +374,244 @@ namespace reromanlee.ReactiveLocalizer
             }
         }
 
+        // Tables.
+
+        /// <inheritdoc/>
+        public TableHandle HoldTable(TableKey table)
+        {
+            if (table.IsEmpty)
+            {
+                throw new ArgumentException("Holding a table needs the key of a table.", nameof(table));
+            }
+            if (IsDisposed)
+            {
+                ReportDisposedUse();
+                return default;
+            }
+            int index = _holds.AcquireHandle(table, out int generation, out bool isFirst);
+            CatalogInfo catalog = Catalog;
+            if (catalog != null && !catalog.TryGetTable(table, out _))
+            {
+                ReportUnknownTable(table);
+            }
+            else if (isFirst)
+            {
+                OnTableAcquired(table.Hash);
+            }
+            return new TableHandle(this, index, generation);
+        }
+
+        internal bool IsHandleActive(int index, int generation) => _holds.TryGetHandleTable(index, generation, out _);
+
+        internal bool IsHandleLoaded(int index, int generation) =>
+            _holds.TryGetHandleTable(index, generation, out ulong tableHash) && GetLoadedResult(tableHash) == true;
+
+        internal Task<bool> GetHandleLoaded(int index, int generation)
+        {
+            if (!_holds.TryGetHandleTable(index, generation, out ulong tableHash))
+            {
+                return NotLoaded;
+            }
+            bool? result = GetLoadedResult(tableHash);
+            if (result.HasValue)
+            {
+                return result.Value ? Loaded : NotLoaded;
+            }
+            Task<bool> task = _holds.GetLoadedTask(tableHash) ?? NotLoaded;
+            // The host may have published the table between the first look and the task's creation.
+            _holds.CompleteLoaded(_getLoadedResult);
+            return task;
+        }
+
+        internal void ReleaseHandle(int index, int generation)
+        {
+            if (_holds.ReleaseHandle(index, generation, out ulong tableHash, out bool isLast) && isLast)
+            {
+                OnTableReleased(tableHash);
+            }
+        }
+
+        /// <summary>Holds the table of a binding's entry, loading it if it loads on demand. Any thread.</summary>
+        internal void AcquireTable(TableKey table)
+        {
+            if (!table.IsEmpty && _holds.Acquire(table))
+            {
+                OnTableAcquired(table.Hash);
+            }
+        }
+
+        /// <summary>Releases the table of a binding's entry. Any thread.</summary>
+        internal void ReleaseTable(ulong tableHash)
+        {
+            if (tableHash != 0 && _holds.Release(tableHash))
+            {
+                OnTableReleased(tableHash);
+            }
+        }
+
+        /// <summary>
+        /// Returns whether a table can be read now (true), can't be loaded at all (false), or is still to load (null).
+        /// Safe from any thread.
+        /// </summary>
+        private bool? GetLoadedResult(ulong tableHash)
+        {
+            if (IsDisposed)
+            {
+                return false;
+            }
+            if (Volatile.Read(ref _state).TryGetLayers(tableHash, out TableLayers layers))
+            {
+                return layers.Count > 0;
+            }
+            CatalogInfo catalog = Catalog;
+            return catalog != null && !catalog.TryGetTable(tableHash, out _) ? false : null;
+        }
+
+        /// <summary>Whether the table with <paramref name="tableHash"/> loads on demand and isn't loaded in <paramref name="state"/>.</summary>
+        private bool IsAwaitingTable(LocalizerState state, ulong tableHash)
+        {
+            CatalogInfo catalog = Catalog;
+            return catalog != null && !state.HasTable(tableHash) && catalog.TryGetTable(tableHash, out TableInfo table) &&
+                table.Loading == TableLoading.OnDemand;
+        }
+
+        private void OnTableAcquired(ulong tableHash)
+        {
+            CatalogInfo catalog = Catalog;
+            // Before the catalog arrives, the first language switch loads whatever is held by then.
+            if (catalog == null || !catalog.TryGetTable(tableHash, out TableInfo table) || table.Loading != TableLoading.OnDemand)
+            {
+                return;
+            }
+            if (_host.IsHostThread)
+            {
+                LoadHeldTable(tableHash);
+                return;
+            }
+            LoadHeldTableLater(tableHash);
+        }
+
+        // A method of its own, because a lambda in OnTableAcquired would make every first hold allocate its closure.
+        private void LoadHeldTableLater(ulong tableHash)
+        {
+            RunOnHostLater(() => LoadHeldTable(tableHash));
+        }
+
+        private void OnTableReleased(ulong tableHash)
+        {
+            CatalogInfo catalog = Catalog;
+            // A table loaded with every language stays loaded, so letting go of it needs no work.
+            if (catalog != null && catalog.TryGetTable(tableHash, out TableInfo table) && table.Loading == TableLoading.Preload)
+            {
+                return;
+            }
+            _holds.QueueRelease(tableHash);
+            RequestUpdate();
+        }
+
+        /// <summary>
+        /// Loads a held on-demand table in the current language, or as part of the switch in progress, which then
+        /// waits for it too. Host thread only.
+        /// </summary>
+        private void LoadHeldTable(ulong tableHash)
+        {
+            if (IsDisposed || _catalog == null || !_catalog.TryGetTable(tableHash, out TableInfo table) ||
+                table.Loading != TableLoading.OnDemand || !_holds.IsHeld(tableHash))
+            {
+                return;
+            }
+            if (_pendingSwitch != null)
+            {
+                if (!_pendingSwitch.Loads.ContainsKey(tableHash))
+                {
+                    AddToSwitch(_pendingSwitch, table);
+                }
+                return;
+            }
+            if (!_state.IsInitialized || _state.HasTable(tableHash) || _onDemandLoads.ContainsKey(tableHash))
+            {
+                return;
+            }
+            ChainLoad load = _loader.Load(table, _state.Chain, _onDemandTableLoaded, null);
+            // A source answering within the call has already completed the load.
+            if (!load.IsDone)
+            {
+                _onDemandLoads[tableHash] = load;
+            }
+        }
+
+        private void OnDemandTableLoaded(ChainLoad load)
+        {
+            ulong tableHash = load.Table.Key.Hash;
+            if (_onDemandLoads.TryGetValue(tableHash, out ChainLoad current) && current == load)
+            {
+                _onDemandLoads.Remove(tableHash);
+            }
+            // A switch applied meanwhile loaded the table in its own language.
+            if (load.IsCancelled || IsDisposed || !_holds.IsHeld(tableHash) || !ReferenceEquals(load.Chain, _state.Chain))
+            {
+                return;
+            }
+            Volatile.Write(ref _state, _state.WithTable(tableHash, load.Result));
+            _bindings.RefreshTable(tableHash);
+            _holds.CompleteLoaded(_getLoadedResult);
+        }
+
+        /// <summary>
+        /// Unloads the on-demand tables nothing held at the last update and nothing holds again since, then queues the
+        /// ones released since for the next update. The update in between lets a binding disposed and made again
+        /// within one frame, as when a panel is toggled, keep its table.
+        /// </summary>
+        private void UnloadReleasedTables()
+        {
+            for (int i = 0; i < _releasedTables.Count; i++)
+            {
+                UnloadIfReleased(_releasedTables[i]);
+            }
+            _releasedTables.Clear();
+            _holds.TakeReleased(_releasedTables);
+            if (_releasedTables.Count > 0)
+            {
+                RequestUpdate();
+            }
+        }
+
+        private void UnloadIfReleased(ulong tableHash)
+        {
+            if (IsDisposed || _holds.IsHeld(tableHash))
+            {
+                return;
+            }
+            if (_onDemandLoads.TryGetValue(tableHash, out ChainLoad load))
+            {
+                load.Cancel();
+                _onDemandLoads.Remove(tableHash);
+            }
+            if (_catalog != null && _catalog.TryGetTable(tableHash, out TableInfo table) && table.Loading == TableLoading.OnDemand)
+            {
+                // A switch in progress no longer waits for it.
+                if (_pendingSwitch != null && _pendingSwitch.Loads.TryGetValue(tableHash, out ChainLoad switchLoad))
+                {
+                    _pendingSwitch.Loads.Remove(tableHash);
+                    if (!switchLoad.IsDone)
+                    {
+                        switchLoad.Cancel();
+                        _pendingSwitch.Outstanding--;
+                    }
+                }
+                if (_state.HasTable(tableHash))
+                {
+                    Volatile.Write(ref _state, _state.WithTable(tableHash, null));
+                }
+                _loader.Prune(_isLoadedTableNeeded);
+            }
+            _holds.CompleteLoaded(tableHash, false);
+            if (_pendingSwitch != null)
+            {
+                TryApply(_pendingSwitch);
+            }
+        }
+
         /// <summary>Applies a new binding's first text: right away on the host thread, else at the host's next update.</summary>
         private void ApplyBinding(int index, int generation)
         {
@@ -387,14 +640,20 @@ namespace reromanlee.ReactiveLocalizer
             RequestUpdate();
         }
 
-        /// <summary>Returns the text a message binding shows right now. Host thread only.</summary>
+        /// <summary>
+        /// Returns the text a message binding shows right now, or null while its on-demand table loads, so the binding
+        /// keeps its text. Host thread only.
+        /// </summary>
         internal string ResolveBindingText(in EntryMessage message)
         {
             LocalizerState state = Volatile.Read(ref _state);
-            return state.IsInitialized ? Format(state, in message, false) : string.Empty;
+            return state.IsInitialized ? Format(state, in message, true) : string.Empty;
         }
 
-        /// <summary>Returns the text a binding of <paramref name="key"/> shows right now. Host thread only.</summary>
+        /// <summary>
+        /// Returns the text a binding of <paramref name="key"/> shows right now, or null while its on-demand table
+        /// loads, so the binding keeps its text. Host thread only.
+        /// </summary>
         internal string ResolveBindingText(in EntryKey key)
         {
             LocalizerState state = Volatile.Read(ref _state);
@@ -412,7 +671,7 @@ namespace reromanlee.ReactiveLocalizer
                 ReportIfMessage(table, index, key.Table.Name, key.Name);
                 return table.GetString(index);
             }
-            return GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
+            return IsAwaitingTable(state, key.Table.Hash) ? null : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
         }
 
         internal bool IsTargetDestroyed(object target)
@@ -440,10 +699,19 @@ namespace reromanlee.ReactiveLocalizer
 
         // Host thread work.
 
-        /// <summary>Runs the work queued from other threads, in the order it was queued. Called by the host on its thread.</summary>
+        /// <summary>
+        /// Runs the work queued from other threads, in the order it was queued, then unloads the tables nothing holds
+        /// anymore. Called by the host on its thread.
+        /// </summary>
         private void Update()
         {
             Volatile.Write(ref _isUpdateScheduled, 0);
+            RunHostActions();
+            UnloadReleasedTables();
+        }
+
+        private void RunHostActions()
+        {
             while (_hostActions.TryDequeue(out Action action))
             {
                 try
@@ -471,7 +739,7 @@ namespace reromanlee.ReactiveLocalizer
                     return;
                 }
                 _hostActions.Enqueue(action);
-                Update();
+                RunHostActions();
                 return;
             }
             _hostActions.Enqueue(action);
@@ -608,7 +876,24 @@ namespace reromanlee.ReactiveLocalizer
             {
                 initialization = _initialization;
             }
+            ReportUnknownHeldTables();
             StartSwitch(start, initialization);
+        }
+
+        /// <summary>Reports every table a handle held before the catalog arrived that the catalog doesn't have.</summary>
+        private void ReportUnknownHeldTables()
+        {
+            _heldTables.Clear();
+            _holds.CopyHeldByHandles(_heldTables);
+            for (int i = 0; i < _heldTables.Count; i++)
+            {
+                if (!_catalog.TryGetTable(_heldTables[i], out _))
+                {
+                    ReportUnknownTable(_heldTables[i]);
+                }
+            }
+            _heldTables.Clear();
+            _holds.CompleteLoaded(_getLoadedResult);
         }
 
         /// <summary>
@@ -671,8 +956,11 @@ namespace reromanlee.ReactiveLocalizer
             TryApply(languageSwitch);
         }
 
-        /// <summary>Whether the localizer keeps <paramref name="table"/> loaded in the current language.</summary>
-        private bool IsKept(TableInfo table) => table.Loading == TableLoading.Preload;
+        /// <summary>
+        /// Whether the localizer keeps <paramref name="table"/> loaded in the current language: always for a preloaded
+        /// table, and while anything holds it for one loaded on demand.
+        /// </summary>
+        private bool IsKept(TableInfo table) => table.Loading == TableLoading.Preload || _holds.IsHeld(table.Key.Hash);
 
         /// <summary>
         /// Applies a switch once every load it waits for is done: publishes the new state in one step, then
@@ -704,10 +992,17 @@ namespace reromanlee.ReactiveLocalizer
             LocalizerState state = new(_state.Version + 1, languageSwitch.Target, chain, formats, stateTables);
             Volatile.Write(ref _state, state);
             _pendingSwitch = null;
+            // On-demand tables still loading in the old language arrived with the switch instead.
+            foreach (ChainLoad load in _onDemandLoads.Values)
+            {
+                load.Cancel();
+            }
+            _onDemandLoads.Clear();
             _loader.Prune(_isLoadedTableNeeded);
 
             _bindings.RefreshAll();
             RaiseLanguageEvent(LanguageChanged, languageSwitch.Target);
+            _holds.CompleteLoaded(_getLoadedResult);
             for (int i = 0; i < languageSwitch.Waiters.Count; i++)
             {
                 languageSwitch.Waiters[i].TrySetResult(true);
@@ -795,6 +1090,7 @@ namespace reromanlee.ReactiveLocalizer
                 _initialWaiters[i].TrySetResult(false);
             }
             _initialWaiters.Clear();
+            _holds.CompleteAllLoaded(false);
         }
 
         private void ReleaseHostState()
@@ -841,13 +1137,16 @@ namespace reromanlee.ReactiveLocalizer
 
         // Messages.
 
-        /// <summary>Returns the text of a message: formatted when its entry has arguments, plain text when it has none.</summary>
-        private string Format(LocalizerState state, in EntryMessage message, bool isReportingEmptyKey)
+        /// <summary>
+        /// Returns the text of a message: formatted when its entry has arguments, plain text when it has none. For a
+        /// binding, returns null while the message's on-demand table loads, so the binding keeps its text.
+        /// </summary>
+        private string Format(LocalizerState state, in EntryMessage message, bool isForBinding)
         {
             EntryKey key = message.Key;
             if (key.IsEmpty)
             {
-                if (isReportingEmptyKey)
+                if (!isForBinding)
                 {
                     ReportEmptyKey();
                 }
@@ -855,7 +1154,9 @@ namespace reromanlee.ReactiveLocalizer
             }
             if (!state.TryResolve(key.Table.Hash, key.Hash, out CompiledTable table, out int index, out int languageIndex))
             {
-                return GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
+                return isForBinding && IsAwaitingTable(state, key.Table.Hash)
+                    ? null
+                    : GetMissingMarker(state, key.Table.Name, key.Name, key.Table.Hash, key.Hash);
             }
             if (!table.TryGetMessage(index, out int start))
             {
@@ -952,8 +1253,20 @@ namespace reromanlee.ReactiveLocalizer
 
         // Reports.
 
+        /// <summary>
+        /// Returns what a read shows for an entry it didn't find: the <c>[Table.Key]</c> marker for a key that exists
+        /// nowhere, reported once, or empty text for an on-demand table that isn't loaded, reported once per table.
+        /// </summary>
         private string GetMissingMarker(LocalizerState state, ReadOnlySpan<char> tableName, ReadOnlySpan<char> entryName, ulong tableHash, ulong entryHash)
         {
+            if (IsAwaitingTable(state, tableHash))
+            {
+                if (_reportedProblems.TryAdd(tableHash, 0, 6))
+                {
+                    Report(ReportSeverity.Warning, $"'{tableName.ToString()}.{entryName.ToString()}' was read while its table, which loads on demand, wasn't loaded, so the read returned empty text. Hold the table with HoldTable and await WhenLoaded first, or bind the text so it arrives on its own.");
+                }
+                return string.Empty;
+            }
             string marker = _missingKeys.GetMarker(tableName, entryName, tableHash, entryHash, out bool isNew);
             if (isNew)
             {
@@ -965,6 +1278,14 @@ namespace reromanlee.ReactiveLocalizer
                 Report(ReportSeverity.Error, $"{marker} is shown because {reason}. Each missing key is reported once.");
             }
             return marker;
+        }
+
+        private void ReportUnknownTable(TableKey table)
+        {
+            if (_reportedProblems.TryAdd(table.Hash, 0, 7))
+            {
+                Report(ReportSeverity.Error, $"The catalog '{CatalogKey.Name}' has no table '{table.Name}' to hold.");
+            }
         }
 
         private void ReportEarlyRead()
