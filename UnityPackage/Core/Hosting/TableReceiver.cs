@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace reromanlee.ReactiveLocalizer.Hosting
@@ -14,6 +15,8 @@ namespace reromanlee.ReactiveLocalizer.Hosting
     public sealed class TableReceiver
     {
         private readonly Action<TableReceiver> _onCompleted;
+        private readonly object _warningsLock = new();
+        private List<string> _warnings;
         private int _isCompleted;
 
         internal TableReceiver(TableRequest request, Action<TableReceiver> onCompleted, object context)
@@ -56,6 +59,33 @@ namespace reromanlee.ReactiveLocalizer.Hosting
             Data = compiledData;
             HasData = true;
             _onCompleted(this);
+        }
+
+        /// <summary>
+        /// Reports a problem with what is about to be delivered that doesn't stop it, such as a line of a file that
+        /// couldn't be read. Warnings reach the localizer's host along with the answer; ones given after it are ignored.
+        /// </summary>
+        public void Warn(string message)
+        {
+            if (string.IsNullOrEmpty(message) || IsCompleted)
+            {
+                return;
+            }
+            lock (_warningsLock)
+            {
+                (_warnings ??= new List<string>()).Add(message);
+            }
+        }
+
+        /// <summary>The warnings given before the answer. Read on the host thread once the request is answered.</summary>
+        internal IReadOnlyList<string> TakeWarnings()
+        {
+            lock (_warningsLock)
+            {
+                IReadOnlyList<string> warnings = (IReadOnlyList<string>)_warnings ?? Array.Empty<string>();
+                _warnings = null;
+                return warnings;
+            }
         }
 
         /// <summary>Reports that the data can't be delivered, and why.</summary>

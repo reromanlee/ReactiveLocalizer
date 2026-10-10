@@ -624,8 +624,8 @@ namespace reromanlee.ReactiveLocalizer
         /// Safe from any thread, and applied on the host thread in order with every other request, so switching to the
         /// language right after registering it works. Registered before initialization, it can be the language
         /// initialization starts in. A name the catalog already has, or a fallback it doesn't, is reported and changes
-        /// nothing. The language's tables come from the table sources like any other's, such as one reading the mods
-        /// folder.
+        /// nothing. The language's tables come from the table sources like any other's, such as a
+        /// <see cref="FolderTableSource"/> reading the mods folder.
         /// </remarks>
         /// <exception cref="ArgumentNullException"><paramref name="language"/> is null.</exception>
         public void RegisterLanguage(LanguageInfo language)
@@ -891,6 +891,11 @@ namespace reromanlee.ReactiveLocalizer
             if (IsDisposed)
             {
                 return;
+            }
+            IReadOnlyList<string> warnings = receiver.TakeWarnings();
+            for (int i = 0; i < warnings.Count; i++)
+            {
+                Report(ReportSeverity.Warning, $"While loading {receiver.Request}: {warnings[i]}");
             }
             if (receiver.Request.IsCatalog)
             {
