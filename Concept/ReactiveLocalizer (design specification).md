@@ -177,16 +177,18 @@ Purchase [3fa2c1] = Купить
 
 1. Each table-and-language file compiles into one binary blob:
    1. a versioned header (format version, catalog, table, language), so a format change or a mismatched file is detected, never misread;
-   2. sorted 64-bit key hashes, aliases included, searched by binary search;
-   3. start positions and lengths into one UTF-16 character buffer that holds every value;
-   4. pre-parsed ICU instructions, only for entries with arguments.
-2. A loaded table is a handful of arrays, whatever its entry count.
-3. **Strings are created on first use.**
+   2. the source keys hash: a hash of the source-language file's keys, carried by the source table and by every translation that has all of them, and zero otherwise;
+   3. sorted 64-bit key hashes, aliases included, searched by binary search;
+   4. start positions and lengths into one UTF-16 character buffer that holds every value;
+   5. pre-parsed ICU instructions, only for entries with arguments.
+2. A translation takes over the source text's aliases, so a renamed entry resolves in every language without its fallback.
+3. A loaded table is a handful of arrays, whatever its entry count.
+4. **Strings are created on first use.**
    1. The first request for an entry creates its `string` and caches it.
    2. Every later read returns the same instance without allocating, including from several threads at once.
    3. A 50,000-line dialogue table only ever creates strings for the lines actually shown.
-4. **Callers that need zero allocations** read values as `ReadOnlyMemory<char>`. The TextMeshPro sample passes them to `SetCharArray` through `MemoryMarshal.TryGetArray` without copying.
-5. **UTF-16, not UTF-8.** UTF-16 is .NET's native string encoding, so creating a string is one copy and nothing needs decoding. UTF-8 would only save memory for Latin-alphabet text, and costs more for Chinese, Japanese and Korean.
+5. **Callers that need zero allocations** read values as `ReadOnlyMemory<char>`, and bind them with `BindCharacters`. The TextMeshPro sample passes them to `SetCharArray` through `MemoryMarshal.TryGetArray` without copying.
+6. **UTF-16, not UTF-8.** UTF-16 is .NET's native string encoding, so creating a string is one copy and nothing needs decoding. UTF-8 would only save memory for Latin-alphabet text, and costs more for Chinese, Japanese and Korean.
 
 ## 7. The localizer runtime
 
@@ -205,14 +207,14 @@ Purchase [3fa2c1] = Купить
    ```
 
 3. With embedded tables, `InitializeAsync` finishes within the call. A prototype can read text on its first frame without awaiting anything.
-4. Extra sources stack in priority order. `new UnityHost(new ModFolderTableSource(path))` asks the mods folder first, so a fan translation can also patch languages the game already ships.
-5. A .NET server would pass a host that reads a folder, and a test would pass one that holds tables in memory.
+4. Extra sources stack in priority order. `new UnityHost(new FolderTableSource(LocalizationKeys.CatalogKey, path))` asks a mods folder first, so a fan translation can also patch languages the game already ships: its entries come first, and the game's fill in the rest (section 8).
+5. A .NET server would pass a host with a `FolderTableSource`, and a test would pass one that holds tables in memory.
 6. Bridges are named by their role (`UnityHost`, `EmbeddedTableSource`, `EntryReference`), never as another "Localizer".
 
 ### 7.2 Threading
 
 1. **Reads** work from any thread without locks. The localizer publishes its state (the current language and the loaded tables) as one object that never changes after it is built, and replaces it by swapping a single reference. A read takes that object once, so it can never see a half-switched language.
-2. **Changes** can be requested from any thread and are applied in order on the host thread: Unity's main thread, through the frame hook. That covers switching the language, loading or unloading tables, and registering a language at runtime.
+2. **Changes** can be requested from any thread and are applied in order on the host thread: Unity's main thread, through the frame hook. That covers switching the language, loading or unloading tables, and registering a language at runtime with `RegisterLanguage`.
 3. **Bindings are notified** on that same thread, so UI code never has to switch threads itself.
 4. **Nothing requires extra threads.** On WebGL everything runs on the main thread, and loading uses the platform's own async loading.
 5. **Idle cost.** While idle, the frame hook costs one flag check per frame.
@@ -220,7 +222,7 @@ Purchase [3fa2c1] = Купить
 ### 7.3 Lookup and fallback
 
 1. A lookup resolves the entry in the current language. If it's missing there, the lookup walks the fallback chain and ends at the source language.
-2. Synchronous reads never block. A read from a table that isn't loaded reports "not loaded".
+2. Synchronous reads never block. A read from an `OnDemand` table that isn't loaded returns empty text, with one warning per table.
 3. Async operations (startup, language switches, explicit loads) return `Task`. They are rare, several systems can await the same switch, and `Task` works on 2022.3 and in plain .NET. UniTask and `Awaitable` users convert with one call.
 4. Failures never throw into game code. A task's result reports what failed.
 
@@ -231,6 +233,7 @@ Purchase [3fa2c1] = Купить
 | Entry missing in the current language | Text from the fallback chain, ending at the source | Counted by the validator |
 | Key doesn't exist (deleted, stale reference, typo in data) | `[Shop.Purchase]`, in every build | One error per unique key |
 | Table still loading | The binding keeps its previous text; empty only on the very first load | Nothing |
+| An `OnDemand` table read while nothing holds it | Empty text | One warning per table |
 | Table failed to load | Fallback-language text, loaded as a recovery | An error with the reason; the task reports the failure |
 | Broken ICU in a translation | Fallback-language text | An import error with file, line and column |
 | Broken ICU in the source language | The text as written | An import error with file, line and column |
@@ -244,22 +247,26 @@ Purchase [3fa2c1] = Купить
 
 ## 8. Loading and delivery
 
-1. **Only the current language is loaded.** Fallback languages are loaded only for tables with gaps in the current language, which the importer already knows. A fully translated language costs no extra memory.
-2. **Loading mode,** set per table with `@loading`:
+1. **Only the current language is loaded.** Fallback languages are loaded only for tables with gaps in the current language. A fully translated language costs no extra memory.
+   1. A table is loaded one language of its fallback chain at a time, and stops at the first table that has every key of the source language: one whose source keys hash (section 6) matches the hash the catalog carries for the table.
+   2. A translation compiled for other source keys, such as remote content from an older release or a mod compiled at runtime, never matches, so its fallbacks always load and a newer key never shows as missing.
+2. **Sources stack.** For each language, every source is asked in priority order, and each table found is searched before the ones after it, until one has every key. A mod's partial patch of Russian therefore comes first, the game's Russian fills in the rest, and English isn't loaded at all.
+3. **Loading mode,** set per table with `@loading`:
    1. **`Preload` (default):** loaded together with the language, so synchronous reads always work.
-   2. **`OnDemand`:** loaded while something uses it and unloaded once nothing does. Bindings keep their tables loaded automatically, and code holds one through a disposable `TableHandle`.
-3. **A binding that needs an unloaded table** starts the load and updates when the data arrives.
-4. **Language switch:**
-   1. load the new language for every loaded table;
+   2. **`OnDemand`:** loaded while something holds it, and unloaded two host updates after nothing does, so a panel toggled within a frame keeps its table. Bindings hold their tables automatically, and code holds one with `localizer.HoldTable(...)`, which returns a disposable `TableHandle` whose `WhenLoaded` task completes once the table can be read.
+4. **A binding that needs an unloaded table** starts the load and updates when the data arrives, keeping its previous text meanwhile.
+5. **Language switch:**
+   1. load the new language for every preloaded table and every held one;
    2. swap everything in one frame;
-   3. release the old language.
+   3. release what the new language doesn't use.
 
-   Rapid switches collapse: only the latest request loads, and every caller's task completes once it lands. `LanguageChanging` and `LanguageChanged` events serve projects that want a loading screen.
-5. **Delivery,** set per table with `@delivery`:
+   Rapid switches collapse: only the latest request loads, loads already started for an earlier one are shared rather than repeated, and every caller's task completes once it lands. A table held while a switch loads joins it. `LanguageChanging` and `LanguageChanged` events serve projects that want a loading screen.
+6. **Delivery,** set per table with `@delivery`:
    1. **In the editor,** tables are read straight from the imported assets. There is no build step, and they're always current.
    2. **`Embedded` (default):** a build step packs the table inside the build, readable synchronously on every platform.
-   3. **`Streaming`:** separate files read on demand, which keeps huge content out of memory and, on WebGL, out of the initial download. UnityWebRequest-based streaming compiles only when that built-in module is enabled.
-   4. **Anything else** (Addressables, mod folders, a CDN) plugs into the same table-source interface.
+   3. **`Streaming`:** a build step packs the table into StreamingAssets, read on demand by `StreamingTableSource`, which keeps huge content out of memory and, on WebGL, out of the initial download. Files are read on a thread pool thread where StreamingAssets is a folder, and through UnityWebRequest where it's a URL (Android, WebGL), which needs the built-in Unity Web Request module. A list of the packed files sits next to the catalog, so a table a language doesn't have is never requested.
+   4. **Anything else** (Addressables, a CDN) plugs into the same table-source interface. A source can attach warnings to what it delivers, which reach the host's diagnostics.
+7. **Mods and downloaded translations** come from `FolderTableSource`: `<Table>.<Language>.lang` files anywhere under a folder, compiled when they're asked for, with their problems reported by file and line. The language sections of the folder's `.catalog` files define new languages, which `localizer.RegisterLanguage(...)` adds at runtime, before or after initialization.
 
 ## 9. Reactive layer
 
@@ -271,12 +278,12 @@ Purchase [3fa2c1] = Купить
    ```
 
    1. It applies the text immediately, then again whenever the text changes: a language switch, an `OnDemand` table arriving, a table file edited in the editor (live, in Play and Edit Mode, arriving with the editor tooling of step 4), or new arguments via `binding.SetMessage(...)`, which formats only when the arguments differ, so calling it every frame costs nothing.
-   2. Binding and updating allocate nothing. The handle is a struct, and the callback is a static lambda that receives its target as state. The callback can take the text as a `string` or as characters.
+   2. Binding and updating allocate nothing. The handle is a struct, and the callback is a static lambda that receives its target as state. `Bind` hands the callback a `string`; `BindCharacters` hands it `ReadOnlyMemory<char>`, valid during the call, and formats messages into a buffer it reuses, so even a changing message allocates nothing.
    3. Disposing a stale or copied handle is a safe no-op.
    4. A binding keeps its `OnDemand` table loaded while it's alive.
    5. A callback that throws is reported and skipped, and the remaining bindings still update. That's the same rule as EventAggregator.
    6. Bindings whose Unity target was destroyed without being disposed are released automatically and reported.
-2. **`ReactiveText`** wraps a binding with `Value`, a `Changed` event and `INotifyPropertyChanged`, for view models, UI Toolkit data binding and the R3 adapter.
+2. **`ReactiveText`** wraps a binding with `Value`, a `Changed` event and `INotifyPropertyChanged`, for view models, UI Toolkit data binding and the R3 adapter. Its events are raised only when the text actually differs.
 3. **Refreshing inactive text costs nothing.** Component samples bind in `OnEnable` and dispose in `OnDisable`, so a language switch only touches what's active, and anything enabled later reads the current language as it binds.
 4. **No time-sliced update mode in v1.** It can be added if profiling ever shows a need.
 
@@ -442,7 +449,7 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
 | R3 | Observables built from `ReactiveText` and bindings |
 | Google Sheets | Two-way sync through Apps Script |
 | Editor Tool | An `EditorWindow` localized with its own catalog, for tool authors |
-| Mods | `ModFolderTableSource`: fan translations loaded from a folder at runtime |
+| Mods | Fan translations read from a mods folder through the core's `FolderTableSource`, with their languages registered at runtime |
 | Unity Localization Migration | Converts locales to languages and string table collections to `.lang` files, converts simple Smart Format placeholders to ICU, and flags complex ones for review |
 
 1. **UniTask needs no sample:** it can already await `Task` directly.
@@ -461,9 +468,10 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
 | Language record | `LanguageInfo` |
 | Entry with arguments | `EntryMessage`, `MessageArgument`, `MessageValue`, `MessageNumber` |
 | Formatter of a registered type | `ArgumentFormatter` |
-| Binding and observable | `TextBinding` (struct), `ReactiveText` (class) |
-| On-demand table hold | `TableHandle` |
-| Table sources | `EmbeddedTableSource`, `StreamingTableSource`, and in samples `AddressablesTableSource`, `ModFolderTableSource` |
+| Binding and observable | `Bind`, `BindCharacters`, `TextBinding` (struct), `ReactiveText` (class) |
+| On-demand table hold | `HoldTable`, `TableHandle` (struct) |
+| Runtime languages | `RegisterLanguage` |
+| Table sources | `EmbeddedTableSource`, `StreamingTableSource`, `FolderTableSource`, and in samples `AddressablesTableSource` |
 | Inspector fields | `EntryReference`, `CatalogReference`, `[EntryCatalog(typeof(...))]` |
 | Editor authoring API | `EntryAuthoring` |
 | Generated code | `LocalizationKeys`, `LocalizationLanguages` |
@@ -487,7 +495,7 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
    3. golden values pin the hash function, since a change would silently break every saved reference;
    4. the generated code and the XLSX, CSV and XLIFF output are compared against reference files kept in the repository, and the fast lane also compiles generated code with Roslyn as C# 9, the language Unity compiles;
    5. language switches stay all-or-nothing under concurrent reads from other threads;
-   6. `OnDemand` tables load and unload as their users come and go;
+   6. `OnDemand` tables load and unload as their users come and go, translations with every key load no fallback, and stacked sources patch the languages behind them;
    7. bindings whose target was destroyed get released;
    8. Play Mode works with domain reload disabled.
 4. **No allocations in steady state:** `Is.Not.AllocatingGCMemory()` checks cached lookups, binding updates, re-setting identical arguments, and formatting into a caller's buffer.
@@ -506,7 +514,7 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
 
 ## 19. Build plan
 
-Each step is a branch squashed into `create/working-prototype`, which is squashed into `main` as one commit at the end.
+Steps 0 to 2 were branches squashed into `create/working-prototype`, which reached `main` as the working prototype. Every later step is a working branch of its own, squashed into `main`.
 
 | Step | Branch | Delivers |
 |---|---|---|
