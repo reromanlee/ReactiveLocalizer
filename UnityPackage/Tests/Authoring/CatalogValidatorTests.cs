@@ -130,7 +130,7 @@ namespace reromanlee.ReactiveLocalizer.Tests
             List<string> lines = Describe(report);
 
             Assert.That(lines, Has.Some.EqualTo("Main.unity: _buy: error: It refers to 'Shop.Purchse', which doesn't exist. Did you mean 'Shop.Purchase'?"));
-            Assert.That(lines, Has.Some.EqualTo("Menu.prefab: _title: error: It refers to 'Shp.Title', which doesn't exist. There is no table 'Shp'; did you mean 'Shop'?"));
+            Assert.That(lines, Has.Some.EqualTo("Menu.prefab: _title: error: It refers to 'Shp.Title', which doesn't exist. There is no table 'Shp'; did you mean 'Shop.Title'?"));
             Assert.That(lines, Has.Some.StartsWith("Main.unity: _old: warning: It refers to 'Shop.BuyButton' by the entry's former name; it was renamed to 'Shop.Purchase'."));
             Assert.That(lines, Has.Some.StartsWith("Hud.prefab: _greeting: warning: It refers to 'Hud.Greeting' by the entry's former key; it moved to 'Dialogue.Welcome'."));
             Assert.That(lines, Has.Some.StartsWith("Shop.English.lang(2,1): warning: No scene, prefab or asset refers to 'Checkout'"));

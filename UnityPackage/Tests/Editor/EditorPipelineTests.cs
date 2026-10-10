@@ -241,6 +241,8 @@ namespace reromanlee.ReactiveLocalizer.Tests
         public void ImportProblems_AreReportedAtTheirLine()
         {
             LogAssert.Expect(LogType.Error, new Regex(@"Shop\.English\.lang\(2,1\): error: 'Broken Line' can't start a line|Shop\.English\.lang\(2,8\): error: Expected '='"));
+            // Without Balance in the source, the Russian Balance is an orphan, reported when Russian is checked again.
+            LogAssert.Expect(LogType.Error, new Regex(@"Shop\.Russian\.lang\(2,1\): error: 'Balance' isn't a key of the source language"));
             File.WriteAllText($"{Folder}/Shop.English.lang", "Purchase = Buy\nBroken Line\n");
 
             AssetDatabase.ImportAsset($"{Folder}/Shop.English.lang", ImportAssetOptions.ForceSynchronousImport);

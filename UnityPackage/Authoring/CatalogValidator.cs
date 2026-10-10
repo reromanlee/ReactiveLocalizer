@@ -53,7 +53,7 @@ namespace reromanlee.ReactiveLocalizer.Authoring
             }
             if (uses != null)
             {
-                ValidateUses(catalog, known, uses, issues);
+                ValidateUses(known, uses, issues);
                 ReportUnusedAliases(known, issues);
             }
             return new ValidationReport(issues);
@@ -244,64 +244,65 @@ namespace reromanlee.ReactiveLocalizer.Authoring
             }
         }
 
-        private static void ValidateUses(CatalogInfo catalog, Dictionary<ulong, KnownTable> tables, IReadOnlyList<EntryUse> uses, List<ValidationIssue> issues)
+        private static void ValidateUses(Dictionary<ulong, KnownTable> tables, IReadOnlyList<EntryUse> uses, List<ValidationIssue> issues)
         {
+            List<(string TableName, TableDocument Source)> sources = new();
+            foreach (KnownTable table in tables.Values)
+            {
+                sources.Add((table.Name, table.Source?.Document));
+            }
+            KeyResolver resolver = new(sources);
             for (int i = 0; i < uses.Count; i++)
             {
                 EntryUse use = uses[i];
-                if (!NameRules.IsValid(use.TableName) || !NameRules.IsValid(use.EntryName))
+                string key = $"{use.TableName}.{use.EntryName}";
+                KeyResolution resolution = resolver.Resolve(use.TableName, use.EntryName);
+                switch (resolution.Kind)
                 {
-                    issues.Add(new ValidationIssue(IssueSeverity.Error, use.Location, $"It refers to '{use.TableName}.{use.EntryName}', which isn't a valid key; pick the entry again."));
-                    continue;
+                    case KeyResolutionKind.Found:
+                        break;
+                    case KeyResolutionKind.Renamed:
+                    case KeyResolutionKind.Moved:
+                        MarkUsed(tables, resolution);
+                        string change = resolution.Kind == KeyResolutionKind.Renamed ? "former name; it was renamed" : "former key; it moved";
+                        issues.Add(new ValidationIssue(IssueSeverity.Warning, use.Location,
+                            $"It refers to '{key}' by the entry's {change} to '{resolution.TableName}.{resolution.EntryName}'. Pick the entry again to update it."));
+                        break;
+                    case KeyResolutionKind.Invalid:
+                        issues.Add(new ValidationIssue(IssueSeverity.Error, use.Location, $"It refers to '{key}', which isn't a valid key; pick the entry again."));
+                        break;
+                    default:
+                        issues.Add(new ValidationIssue(IssueSeverity.Error, use.Location, $"It refers to '{key}', which doesn't exist.{DescribeSuggestion(tables, use, resolution)}"));
+                        break;
                 }
-                ulong tableHash = Hashing.ComputeNameHash(use.TableName);
-                ulong entryHash = Hashing.ComputeNameHash(use.EntryName);
-                tables.TryGetValue(tableHash, out KnownTable table);
-                if (table?.Source != null && table.Source.Document.TryGetEntry(use.EntryName, out _))
-                {
-                    continue;
-                }
-                if (table != null && table.Aliases.TryGetValue(entryHash, out KnownAlias alias))
-                {
-                    alias.IsUsed = true;
-                    issues.Add(new ValidationIssue(IssueSeverity.Warning, use.Location,
-                        $"It refers to '{use.TableName}.{use.EntryName}' by the entry's former name; it was renamed to '{use.TableName}.{alias.EntryName}'. Pick the entry again to update it."));
-                    continue;
-                }
-                if (catalog.MovedEntries.TryGetValue((tableHash, entryHash), out EntryKey moved))
-                {
-                    if (tables.TryGetValue(moved.Table.Hash, out KnownTable target) && target.Aliases.TryGetValue(Hashing.ComputeNameHash($"{use.TableName}.{use.EntryName}"), out KnownAlias movedAlias))
-                    {
-                        movedAlias.IsUsed = true;
-                    }
-                    issues.Add(new ValidationIssue(IssueSeverity.Warning, use.Location,
-                        $"It refers to '{use.TableName}.{use.EntryName}' by the entry's former key; it moved to '{moved}'. Pick the entry again to update it."));
-                    continue;
-                }
-                issues.Add(new ValidationIssue(IssueSeverity.Error, use.Location, $"It refers to '{use.TableName}.{use.EntryName}', which doesn't exist.{Suggest(use, table, tables)}"));
             }
         }
 
-        private static string Suggest(EntryUse use, KnownTable table, Dictionary<ulong, KnownTable> tables)
+        private static string DescribeSuggestion(Dictionary<ulong, KnownTable> tables, EntryUse use, KeyResolution resolution)
         {
-            if (table?.Source != null)
+            bool hasTable = tables.TryGetValue(Hashing.ComputeNameHash(use.TableName), out KnownTable table) && table.Source != null;
+            if (hasTable)
             {
-                List<string> keys = new();
-                IReadOnlyList<TableDocumentEntry> entries = table.Source.Document.Entries;
-                for (int i = 0; i < entries.Count; i++)
+                return resolution.Suggestion != null ? $" Did you mean '{resolution.Suggestion}'?" : string.Empty;
+            }
+            return resolution.Suggestion != null
+                ? $" There is no table '{use.TableName}'; did you mean '{resolution.Suggestion}'?"
+                : $" There is no table '{use.TableName}'.";
+        }
+
+        private static void MarkUsed(Dictionary<ulong, KnownTable> tables, KeyResolution resolution)
+        {
+            if (!tables.TryGetValue(Hashing.ComputeNameHash(resolution.TableName), out KnownTable table))
+            {
+                return;
+            }
+            for (int i = 0; i < table.Aliases.Count; i++)
+            {
+                if (string.Equals(table.Aliases[i].WrittenName, resolution.FormerName, StringComparison.OrdinalIgnoreCase))
                 {
-                    keys.Add(entries[i].Key);
+                    table.Aliases[i].IsUsed = true;
                 }
-                string closest = NameDistance.FindClosest(use.EntryName, keys);
-                return closest != null ? $" Did you mean '{table.Name}.{closest}'?" : string.Empty;
             }
-            List<string> names = new();
-            foreach (KnownTable candidate in tables.Values)
-            {
-                names.Add(candidate.Name);
-            }
-            string closestTable = NameDistance.FindClosest(use.TableName, names);
-            return closestTable != null ? $" There is no table '{use.TableName}'; did you mean '{closestTable}'?" : $" There is no table '{use.TableName}'.";
         }
 
         private static void ReportUnusedAliases(Dictionary<ulong, KnownTable> tables, List<ValidationIssue> issues)
@@ -310,7 +311,7 @@ namespace reromanlee.ReactiveLocalizer.Authoring
             sorted.Sort((left, right) => NaturalOrder.Instance.Compare(left.Name, right.Name));
             for (int t = 0; t < sorted.Count; t++)
             {
-                foreach (KnownAlias alias in sorted[t].AliasesInFileOrder)
+                foreach (KnownAlias alias in sorted[t].Aliases)
                 {
                     if (!alias.IsUsed)
                     {
@@ -364,25 +365,9 @@ namespace reromanlee.ReactiveLocalizer.Authoring
                     for (int a = 0; a < entries[e].Attributes.Count; a++)
                     {
                         DocumentProperty attribute = entries[e].Attributes[a];
-                        if (attribute.Name != DocumentNames.Formerly)
+                        if (attribute.Name == DocumentNames.Formerly)
                         {
-                            continue;
-                        }
-                        // An alias of this very table, qualified or not, is found by its name; one of another table by Table.Name.
-                        string lookup = attribute.Value;
-                        if (MovedEntries.TryParseQualified(lookup, out string formerTable, out string formerEntry) &&
-                            string.Equals(formerTable, name, StringComparison.OrdinalIgnoreCase))
-                        {
-                            lookup = formerEntry;
-                        }
-                        if (!NameRules.IsValid(lookup) && !MovedEntries.TryParseQualified(lookup, out _, out _))
-                        {
-                            continue;
-                        }
-                        KnownAlias alias = new(attribute.Value, entries[e].Key, attribute.Line);
-                        if (Aliases.TryAdd(Hashing.ComputeNameHash(lookup), alias))
-                        {
-                            AliasesInFileOrder.Add(alias);
+                            Aliases.Add(new KnownAlias(attribute.Value, entries[e].Key, attribute.Line));
                         }
                     }
                 }
@@ -392,10 +377,8 @@ namespace reromanlee.ReactiveLocalizer.Authoring
 
             public ValidatedFile Source { get; }
 
-            /// <summary>By the hash of the former name, or of <c>Table.Name</c> for an entry that moved here from another table.</summary>
-            public Dictionary<ulong, KnownAlias> Aliases { get; } = new();
-
-            public List<KnownAlias> AliasesInFileOrder { get; } = new();
+            /// <summary>Every <c>@formerly</c> of the source file, in file order.</summary>
+            public List<KnownAlias> Aliases { get; } = new();
         }
 
         private sealed class KnownAlias
