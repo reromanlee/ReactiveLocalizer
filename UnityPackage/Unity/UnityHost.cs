@@ -21,10 +21,11 @@ namespace reromanlee.ReactiveLocalizer.Unity
 
         /// <summary>
         /// Creates a host that asks <paramref name="additionalSources"/> first, in order, then the built-in sources:
-        /// the imported files in the editor, the tables packed into the build in players.
+        /// the imported files in the editor, and in players the tables packed into the build and into StreamingAssets.
         /// </summary>
         /// <remarks>
-        /// A source asked first can also replace tables the game ships, as a mods folder does for a fan translation.
+        /// A source asked first also patches the languages the game ships, as a mods folder does with a fan
+        /// translation: its entries come first, and the game's fill in the rest.
         /// </remarks>
         public UnityHost(params ITableSource[] additionalSources)
         {
@@ -44,6 +45,7 @@ namespace reromanlee.ReactiveLocalizer.Unity
                 sources.Add(EditorBridge.TableSource);
             }
             sources.Add(new EmbeddedTableSource());
+            sources.Add(new StreamingTableSource());
             _sources = sources.ToArray();
         }
 
