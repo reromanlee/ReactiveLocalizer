@@ -195,6 +195,19 @@ namespace reromanlee.ReactiveLocalizer.Tests
         }
 
         [Test]
+        public void Localizer_InTheEditor_ShowsThePseudoLanguage()
+        {
+            using Localizer localizer = new(new CatalogKey("Game"), new UnityHost());
+            localizer.InitializeAsync();
+
+            Assert.That(localizer.SetLanguageAsync(PseudoLocalization.Language).IsCompleted, Is.True);
+            Assert.That(localizer.CurrentLanguage.Key, Is.EqualTo(PseudoLocalization.Language));
+            Assert.That(localizer.Get(Purchase), Is.EqualTo("[B\u00FB\u00FD one]"));
+            Assert.That(localizer.Get(new EntryKey("Shop", "BuyButton")), Is.EqualTo("[B\u00FB\u00FD one]"));
+            Assert.That(localizer.Get(BalanceOf(21)), Is.EqualTo("[\u00DD\u00F6\u00FB \u0125\u00E5v\u00E9 21 \u00E7\u00F6\u00EE\u00F1\u0161. one two]"));
+        }
+
+        [Test]
         public void Validate_FindsBrokenAndRenamedReferencesInAssets()
         {
             EntryHolder holder = ScriptableObject.CreateInstance<EntryHolder>();
@@ -332,6 +345,11 @@ namespace reromanlee.ReactiveLocalizer.Tests
                 Assert.That(missing.Text, Does.Contain("Did you mean 'Shop.Purchase'?"));
                 Assert.That(elsewhere.Kind, Is.EqualTo(EntryPreviewKind.Broken));
                 Assert.That(EntryPreview.Describe(default).Kind, Is.EqualTo(EntryPreviewKind.Unpicked));
+
+                settings.PreviewLanguage = PseudoLocalization.LanguageName;
+                EntryDescription pseudo = EntryPreview.Describe(new EntryReference("Game", "Shop", "Purchase"));
+                Assert.That(pseudo.Text, Is.EqualTo("[B\u00FB\u00FD one]"));
+                Assert.That(pseudo.Tooltip, Is.Null);
             }
             finally
             {
@@ -370,6 +388,8 @@ namespace reromanlee.ReactiveLocalizer.Tests
                 Assert.That(preview.Get(Purchase), Is.EqualTo("Buy"));
                 settings.PreviewLanguage = "Russian";
                 Assert.That(preview.Get(Purchase), Is.EqualTo("Kupit"));
+                settings.PreviewLanguage = PseudoLocalization.LanguageName;
+                Assert.That(preview.Get(Purchase), Is.EqualTo("[B\u00FB\u00FD one]"));
                 settings.PreviewLanguage = "Klingon";
                 Assert.That(preview.Get(Purchase), Is.EqualTo("Buy"));
                 Assert.That(EditModePreview.For(new CatalogKey("Nowhere")), Is.Null);

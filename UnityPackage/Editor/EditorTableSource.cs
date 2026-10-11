@@ -7,7 +7,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
 {
     /// <summary>
     /// Delivers catalogs and tables straight from the project's files in the editor, in Play Mode and Edit Mode
-    /// alike, so what the editor shows is always what the files say, with no build step in between.
+    /// alike, so what the editor shows is always what the files say, with no build step in between. Catalogs come
+    /// with the pseudo language when it is offered, and its tables are made from the source-language files.
     /// </summary>
     internal sealed class EditorTableSource : ITableSource
     {
@@ -20,10 +21,25 @@ namespace reromanlee.ReactiveLocalizer.Editor
             }
             if (request.IsCatalog)
             {
-                receiver.Receive(CompiledCatalog.Write(catalog.Info));
+                receiver.Receive(CompiledCatalog.Write(PseudoTables.GetCatalog(catalog, PseudoTables.IsOffered)));
                 return true;
             }
-            if (!catalog.TryGetTable(request.Table, out IndexedTable table) || !table.TryGetFile(request.Language, out string path))
+            if (!catalog.TryGetTable(request.Table, out IndexedTable table))
+            {
+                return false;
+            }
+            if (PseudoTables.IsPseudo(catalog, request.Language))
+            {
+                byte[] pseudo = PseudoTables.Compile(catalog, table, out string problem);
+                if (pseudo == null)
+                {
+                    return false;
+                }
+                receiver.Warn(problem);
+                receiver.Receive(pseudo);
+                return true;
+            }
+            if (!table.TryGetFile(request.Language, out string path))
             {
                 return false;
             }
