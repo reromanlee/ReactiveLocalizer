@@ -80,8 +80,13 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 {
                     continue;
                 }
+                bool isNew = !_baseline.TryGetValue(language, out string baseline);
+                // A file the table didn't have, left empty, as when an import took its only text back, isn't created.
+                if (isNew && file.Entries.Count == 0)
+                {
+                    continue;
+                }
                 string text = file.Write();
-                _baseline.TryGetValue(language, out string baseline);
                 if (!string.Equals(text, baseline, StringComparison.Ordinal))
                 {
                     changes.Add(new KeyValuePair<string, string>(GetPath(language), text));
