@@ -1,0 +1,21 @@
+{
+    "name": "reromanlee.ReactiveLocalizer.Samples.GoogleSheets.Editor",
+    "rootNamespace": "reromanlee.ReactiveLocalizer.Samples.GoogleSheets.Editor",
+    "references": [
+        "reromanlee.ReactiveLocalizer",
+        "reromanlee.ReactiveLocalizer.Unity",
+        "reromanlee.ReactiveLocalizer.Authoring",
+        "reromanlee.ReactiveLocalizer.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
