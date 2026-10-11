@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace reromanlee.ReactiveLocalizer.Authoring
 {
-    /// <summary>One table of a catalog, with every file it has, as the validator reads it.</summary>
+    /// <summary>One table of a catalog with every file it has, read: what validation and exports work from.</summary>
     public sealed class ValidatedTable
     {
         /// <summary>Creates the table named <paramref name="name"/>.</summary>
