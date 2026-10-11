@@ -25,6 +25,8 @@ permissions:
   contents: read
   # The test runner reports its results as a check run.
   checks: write
+  # The gate looks for the marker an earlier run left on the same files.
+  actions: read
 
 # A Personal license needs UNITY_LICENSE, UNITY_EMAIL and UNITY_PASSWORD; a Pro license UNITY_SERIAL instead of the first.
 env:
@@ -34,8 +36,38 @@ env:
   UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
 
 jobs:
+  # A squash merge makes a new commit, but its files are exactly the ones the pull request's last run tested, as long as
+  # main didn't move in between. A push whose file tree already passed skips the jobs below, and the run still succeeds;
+  # any other push, such as one combining two pull requests, runs them all.
+  gate:
+    name: Look for a run that passed on the same files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      is-verified: ${{ steps.lookup.outputs.is-verified }}
+    steps:
+      - name: Look for the marker of a passed run
+        id: lookup
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TREE: ${{ github.event.head_commit.tree_id }}
+        run: |
+          if [ -z "$TREE" ]; then
+            exit 0
+          fi
+          # Only runs of this repository count, never runs of pull requests from forks.
+          query='[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == .workflow_run.repository_id)] | first | .workflow_run.id // empty'
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=passed-files-$TREE" --jq "$query") || run=""
+          if [ -n "$run" ]; then
+            echo "::notice::Run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run already passed on these exact files, so this run skips its jobs."
+            echo "is-verified=true" >> "$GITHUB_OUTPUT"
+          fi
+
   tests:
     name: Tests on ${{ matrix.unityVersion }}
+    needs: gate
+    if: needs.gate.outputs.is-verified != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -102,6 +134,8 @@ jobs:
 
   builds:
     name: ${{ matrix.targetPlatform }} build on ${{ matrix.unityVersion }}
+    needs: gate
+    if: needs.gate.outputs.is-verified != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -173,3 +207,28 @@ jobs:
           projectPath: UnityProject
           buildMethod: reromanlee.ReactiveLocalizer.ContinuousIntegration.PlayerBuild.Build
           versioning: None
+
+  # Leaves the marker the gate looks for, named after the tested file tree, once every job passed.
+  passed:
+    name: Mark the files as passed
+    needs: [tests, builds]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A missing marker only means main runs everything again, so it never fails the run.
+    continue-on-error: true
+    steps:
+      - name: Find the tree of the tested commit
+        id: tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha)
+          echo "$tree" > passed-files.txt
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the marker
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: passed-files-${{ steps.tree.outputs.tree }}
+          path: passed-files.txt
+          retention-days: 30

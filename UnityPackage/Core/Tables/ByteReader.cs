@@ -1,5 +1,6 @@
 using System;
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 
 namespace reromanlee.ReactiveLocalizer.Tables
 {
@@ -95,15 +96,57 @@ namespace reromanlee.ReactiveLocalizer.Tables
         /// <summary>Reads <paramref name="target"/>.Length UTF-16 code units, low byte first.</summary>
         public bool TryReadCharacters(Span<char> target)
         {
-            if ((long)target.Length * 2 > Remaining)
+            if (!TryTake(target.Length, 2, out ReadOnlySpan<byte> source))
             {
                 return false;
             }
+            if (BitConverter.IsLittleEndian)
+            {
+                MemoryMarshal.Cast<byte, char>(source).CopyTo(target);
+                return true;
+            }
             for (int i = 0; i < target.Length; i++)
             {
-                target[i] = (char)BinaryPrimitives.ReadUInt16LittleEndian(_data.Slice(_position + i * 2, 2));
+                target[i] = (char)BinaryPrimitives.ReadUInt16LittleEndian(source.Slice(i * 2, 2));
             }
-            _position += target.Length * 2;
+            return true;
+        }
+
+        /// <summary>Reads <paramref name="target"/>.Length 32-bit integers.</summary>
+        public bool TryReadInt32s(Span<int> target)
+        {
+            if (!TryTake(target.Length, 4, out ReadOnlySpan<byte> source))
+            {
+                return false;
+            }
+            if (BitConverter.IsLittleEndian)
+            {
+                MemoryMarshal.Cast<byte, int>(source).CopyTo(target);
+                return true;
+            }
+            for (int i = 0; i < target.Length; i++)
+            {
+                target[i] = BinaryPrimitives.ReadInt32LittleEndian(source.Slice(i * 4, 4));
+            }
+            return true;
+        }
+
+        /// <summary>Reads <paramref name="target"/>.Length unsigned 64-bit integers.</summary>
+        public bool TryReadUInt64s(Span<ulong> target)
+        {
+            if (!TryTake(target.Length, 8, out ReadOnlySpan<byte> source))
+            {
+                return false;
+            }
+            if (BitConverter.IsLittleEndian)
+            {
+                MemoryMarshal.Cast<byte, ulong>(source).CopyTo(target);
+                return true;
+            }
+            for (int i = 0; i < target.Length; i++)
+            {
+                target[i] = BinaryPrimitives.ReadUInt64LittleEndian(source.Slice(i * 8, 8));
+            }
             return true;
         }
 
@@ -127,6 +170,22 @@ namespace reromanlee.ReactiveLocalizer.Tables
                 return false;
             }
             value = new string(characters);
+            return true;
+        }
+
+        /// <summary>
+        /// Takes the bytes of <paramref name="count"/> values of <paramref name="bytesPerValue"/> bytes each. Arrays are
+        /// copied as they are where the platform is little-endian like the data, which is every platform Unity targets.
+        /// </summary>
+        private bool TryTake(int count, int bytesPerValue, out ReadOnlySpan<byte> bytes)
+        {
+            if ((long)count * bytesPerValue > Remaining)
+            {
+                bytes = default;
+                return false;
+            }
+            bytes = _data.Slice(_position, count * bytesPerValue);
+            _position += bytes.Length;
             return true;
         }
     }

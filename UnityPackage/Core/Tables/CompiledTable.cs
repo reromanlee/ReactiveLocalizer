@@ -177,11 +177,13 @@ namespace reromanlee.ReactiveLocalizer.Tables
             ulong[] hashes = new ulong[entryCount];
             int[] starts = new int[entryCount];
             int[] lengths = new int[entryCount];
-            for (int i = 0; i < entryCount; i++)
+            reader.TryReadUInt64s(hashes);
+            reader.TryReadInt32s(starts);
+            reader.TryReadInt32s(lengths);
+            for (int i = 1; i < entryCount; i++)
             {
-                reader.TryReadUInt64(out hashes[i]);
                 // Binary search needs strictly ascending hashes; a file that breaks this would find wrong entries.
-                if (i > 0 && hashes[i] <= hashes[i - 1])
+                if (hashes[i] <= hashes[i - 1])
                 {
                     error = "The table's key hashes are out of order.";
                     return false;
@@ -189,11 +191,6 @@ namespace reromanlee.ReactiveLocalizer.Tables
             }
             for (int i = 0; i < entryCount; i++)
             {
-                reader.TryReadInt32(out starts[i]);
-            }
-            for (int i = 0; i < entryCount; i++)
-            {
-                reader.TryReadInt32(out lengths[i]);
                 bool isValid = lengths[i] < 0
                     ? ~lengths[i] < messageCount
                     : starts[i] >= 0 && (long)starts[i] + lengths[i] <= characterCount;
@@ -207,10 +204,11 @@ namespace reromanlee.ReactiveLocalizer.Tables
             // Aliases: sorted hashes, then the entry each one points to.
             ulong[] aliasHashes = aliasCount == 0 ? Array.Empty<ulong>() : new ulong[aliasCount];
             int[] aliasTargets = aliasCount == 0 ? Array.Empty<int>() : new int[aliasCount];
-            for (int i = 0; i < aliasCount; i++)
+            reader.TryReadUInt64s(aliasHashes);
+            reader.TryReadInt32s(aliasTargets);
+            for (int i = 1; i < aliasCount; i++)
             {
-                reader.TryReadUInt64(out aliasHashes[i]);
-                if (i > 0 && aliasHashes[i] <= aliasHashes[i - 1])
+                if (aliasHashes[i] <= aliasHashes[i - 1])
                 {
                     error = "The table's aliases are damaged.";
                     return false;
@@ -218,7 +216,6 @@ namespace reromanlee.ReactiveLocalizer.Tables
             }
             for (int i = 0; i < aliasCount; i++)
             {
-                reader.TryReadInt32(out aliasTargets[i]);
                 if ((uint)aliasTargets[i] >= (uint)entryCount)
                 {
                     error = "An alias of the table points outside it.";
@@ -228,15 +225,9 @@ namespace reromanlee.ReactiveLocalizer.Tables
 
             // Messages: where each one starts, then every message's operations.
             int[] messageStarts = messageCount == 0 ? Array.Empty<int>() : new int[messageCount];
-            for (int i = 0; i < messageCount; i++)
-            {
-                reader.TryReadInt32(out messageStarts[i]);
-            }
+            reader.TryReadInt32s(messageStarts);
             int[] program = programLength == 0 ? Array.Empty<int>() : new int[programLength];
-            for (int i = 0; i < programLength; i++)
-            {
-                reader.TryReadInt32(out program[i]);
-            }
+            reader.TryReadInt32s(program);
 
             // Texts.
             char[] characters = characterCount == 0 ? Array.Empty<char>() : new char[characterCount];
