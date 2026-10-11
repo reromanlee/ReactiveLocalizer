@@ -129,9 +129,11 @@ jobs:
           - unityVersion: 6000.5.11f1
             targetPlatform: StandaloneOSX
             samplePackages: '{"com.unity.ugui": "2.0.0"}'
+          # This build also compiles the samples for Addressables, Unity Localization and VContainer. R3 stays out, since
+          # it needs DLLs from NuGet in Assets.
           - unityVersion: 6000.5.11f1
             targetPlatform: StandaloneLinux64
-            samplePackages: '{"com.unity.ugui": "2.0.0"}'
+            samplePackages: '{"com.unity.ugui": "2.0.0", "com.unity.addressables": "2.9.1", "com.unity.localization": "1.5.13", "jp.hadashikick.vcontainer": "https://github.com/hadashiA/VContainer.git?path=VContainer/Assets/VContainer#1.18.0"}'
     steps:
       - name: Free disk space for the Unity image
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
