@@ -1,5 +1,6 @@
 using System;
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 
 namespace reromanlee.ReactiveLocalizer.Tables
 {
@@ -48,6 +49,11 @@ namespace reromanlee.ReactiveLocalizer.Tables
         public void WriteCharacters(ReadOnlySpan<char> characters)
         {
             Span<byte> target = Reserve(characters.Length * 2);
+            if (BitConverter.IsLittleEndian)
+            {
+                MemoryMarshal.AsBytes(characters).CopyTo(target);
+                return;
+            }
             for (int i = 0; i < characters.Length; i++)
             {
                 BinaryPrimitives.WriteUInt16LittleEndian(target.Slice(i * 2, 2), characters[i]);
