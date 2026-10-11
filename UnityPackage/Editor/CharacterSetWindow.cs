@@ -96,7 +96,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
             });
             root.Add(catalogField);
 
-            IReadOnlyList<LanguageInfo> languages = CharacterSets.GetLanguages(catalog.Key);
+            IReadOnlyList<LanguageInfo> languages = CharacterSets.GetCatalog(catalog.Key)?.Languages ?? Array.Empty<LanguageInfo>();
             List<string> languageNames = new(languages.Count);
             for (int i = 0; i < languages.Count; i++)
             {
@@ -209,7 +209,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
             }
             CharacterSet characters = new();
             _pickedLanguages.Clear();
-            IReadOnlyList<LanguageInfo> languages = CharacterSets.GetLanguages(catalog.Key);
+            IReadOnlyList<LanguageInfo> languages = CharacterSets.GetCatalog(catalog.Key)?.Languages ?? Array.Empty<LanguageInfo>();
             for (int i = 0; i < languages.Count; i++)
             {
                 if (!_excludedLanguages.Contains(languages[i].Name))

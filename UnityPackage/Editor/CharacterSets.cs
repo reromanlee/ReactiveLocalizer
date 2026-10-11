@@ -19,14 +19,14 @@ namespace reromanlee.ReactiveLocalizer.Editor
     public static class CharacterSets
     {
         /// <summary>
-        /// Returns the languages of <paramref name="catalog"/> a set can be collected for: its own, then the pseudo
-        /// language unless it defines one itself. Empty when the project has no usable catalog of that name.
+        /// Returns <paramref name="catalog"/> as its sets are collected: its languages and their fallbacks, then the
+        /// pseudo language unless it defines one itself. Null when the project has no usable catalog of that name.
         /// </summary>
         /// <param name="catalog">The catalog; empty for the default catalog.</param>
-        public static IReadOnlyList<LanguageInfo> GetLanguages(CatalogKey catalog)
+        public static CatalogInfo GetCatalog(CatalogKey catalog)
         {
             IndexedCatalog indexed = Find(catalog);
-            return indexed != null ? PseudoTables.GetCatalog(indexed, true).Languages : Array.Empty<LanguageInfo>();
+            return indexed != null ? PseudoTables.GetCatalog(indexed, true) : null;
         }
 
         /// <summary>
