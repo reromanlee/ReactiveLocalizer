@@ -1,0 +1,33 @@
+{
+    "name": "reromanlee.ReactiveLocalizer.Samples.VContainer",
+    "rootNamespace": "reromanlee.ReactiveLocalizer.Samples.VContainer",
+    "references": [
+        "reromanlee.ReactiveLocalizer",
+        "reromanlee.ReactiveLocalizer.Unity",
+        "reromanlee.ReactiveLocalizer.Samples.QuickStart",
+        "VContainer",
+        "UniTask"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "REACTIVE_LOCALIZER_VCONTAINER"
+    ],
+    "versionDefines": [
+        {
+            "name": "jp.hadashikick.vcontainer",
+            "expression": "1.13.0",
+            "define": "REACTIVE_LOCALIZER_VCONTAINER"
+        },
+        {
+            "name": "com.cysharp.unitask",
+            "expression": "",
+            "define": "VCONTAINER_UNITASK_INTEGRATION"
+        }
+    ],
+    "noEngineReferences": false
+}
