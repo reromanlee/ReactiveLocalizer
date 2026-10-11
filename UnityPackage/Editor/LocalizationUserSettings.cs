@@ -9,7 +9,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
 {
     /// <summary>
     /// Each person's own ReactiveLocalizer state in a project, saved in <c>UserSettings/ReactiveLocalizer.asset</c>,
-    /// which version control leaves out: the preview language, and the entries and table picked last.
+    /// which version control leaves out: the preview language, the entries and table picked last, and the folder
+    /// translations were last exchanged through.
     /// </summary>
     [FilePath("UserSettings/ReactiveLocalizer.asset", FilePathAttribute.Location.ProjectFolder)]
     internal sealed class LocalizationUserSettings : ScriptableSingleton<LocalizationUserSettings>
@@ -19,6 +20,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
         [SerializeField] private string _previewLanguage;
         [SerializeField] private string _lastTable;
         [SerializeField] private List<EntryReference> _recentEntries = new();
+        [SerializeField] private string _exchangeFolder;
 
         /// <summary>Raised when the preview language changes.</summary>
         public static event Action PreviewLanguageChanged;
@@ -55,6 +57,21 @@ namespace reromanlee.ReactiveLocalizer.Editor
                     return;
                 }
                 _lastTable = value;
+                Save(true);
+            }
+        }
+
+        /// <summary>The folder translations were last exported to or imported from, which file dialogs open in; empty for the project's.</summary>
+        public string ExchangeFolder
+        {
+            get => _exchangeFolder ?? string.Empty;
+            set
+            {
+                if (string.Equals(value, _exchangeFolder, StringComparison.Ordinal))
+                {
+                    return;
+                }
+                _exchangeFolder = value;
                 Save(true);
             }
         }
