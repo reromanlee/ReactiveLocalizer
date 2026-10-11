@@ -1,0 +1,2 @@
+# A mod can patch a language the game ships: these entries replace the game's, and every other entry stays as it was.
+Hint = This hint comes from the example mod, which patches English too. Remove the mods folder to get the game's own text back.

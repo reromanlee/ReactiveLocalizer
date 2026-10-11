@@ -1,0 +1,18 @@
+{
+    "name": "reromanlee.ReactiveLocalizer.Samples.Mods",
+    "rootNamespace": "reromanlee.ReactiveLocalizer.Samples.Mods",
+    "references": [
+        "reromanlee.ReactiveLocalizer",
+        "reromanlee.ReactiveLocalizer.Unity",
+        "reromanlee.ReactiveLocalizer.Samples.QuickStart"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
