@@ -401,7 +401,7 @@ Purchase [3fa2c1] = Купить
 
 ### 12.5 Scene view overlay
 
-The overlay switches the preview language, and every bound text in the open scenes updates live in Edit Mode. Entry field previews and the table window's preview use the same language.
+The overlay switches the preview language, the pseudo language included (section 14), and every bound text in the open scenes updates live in Edit Mode. Entry field previews and the table window's preview use the same language.
 
 1. **Components opt in through `EditModePreview`.** Outside Play Mode it hands out one localizer per catalog in the preview language. It falls back to the catalog's source language when the catalog lacks that one. Those localizers are disposed before Play Mode and before scripts reload.
 2. **Preview text is never saved.** A component showing it registers with `EditModePreview.Track`. Before its scene or prefab saves, the component puts its authored text back, and it shows the preview again right after. Text typed over the preview counts as the new authored text.
@@ -410,7 +410,7 @@ The overlay switches the preview language, and every bound text in the open scen
 ### 12.6 Menus
 
 1. `Window/ReactiveLocalizer/Tables`, whose *Exchange* menu exports the open table or the whole catalog and imports files and replies.
-2. `Tools/ReactiveLocalizer/…`: *Validate*, *Export…*, *Import File…*, *Import Folder…*, *Import LLM Reply*, and in later steps character sets and the agent guide.
+2. `Tools/ReactiveLocalizer/…`: *Validate*, *Export…*, *Import File…*, *Import Folder…*, *Import LLM Reply*, *Character Sets…*, and in a later step the agent guide.
 3. `Assets/Create/ReactiveLocalizer/…` (catalog, table). Creating a catalog asks for its name, source language, culture and display name, and checks the culture against CLDR. Creating the first table of a project without a catalog asks the same first.
 
 ## 13. Exchange formats
@@ -447,11 +447,18 @@ The overlay switches the preview language, and every bound text in the open scen
 
 ## 14. Developer tools
 
-1. **Pseudo-localization:** a virtual language generated on the fly from the source text and never stored in files.
-   1. It's accented so hardcoded strings stand out, padded by about 35% so overflow shows up, and bracketed so truncation and glued-together strings are obvious.
-   2. ICU syntax, rich text tags and escapes stay intact.
-   3. It's available in the editor preview and in development builds, and excluded from release builds.
-2. **Character sets:** for each language, the exact set of characters any table can display (literal text, plural forms, number symbols, digits, without rich text tags). They're exported to a file or the clipboard for TextMeshPro's Font Asset Creator.
+1. **Pseudo-localization:** a virtual language named `Pseudo`, made from the source text and never stored in files.
+   1. It's accented so hardcoded strings stand out, padded by about 35% with words so overflow shows up, and bracketed so truncation and glued-together strings are obvious: `Buy now` shows as `[Bûý ñöŵ one]`.
+   2. ICU syntax, rich text tags and escapes stay intact. The accented letters all come from Latin-1 and Latin Extended-A, which nearly every font has, so letters without such a form stay plain, and so do other scripts, which still get the padding and brackets.
+   3. It writes and counts like the source language, whose culture and number symbols it takes, and falls back to it.
+   4. Each table's pseudo text is compiled as a translation of its source-language file, so the same checks prove it keeps every argument, and it has every key and alias.
+   5. The editor's preview always offers it. Play Mode and development builds have it as one more language of every catalog, so a language picker lists it, unless the project settings turn that off. Release builds never have it.
+   6. A catalog that defines a language named `Pseudo` itself keeps that language and gets no pseudo language.
+   7. Tables delivered by a custom source, such as Addressables, have no pseudo version, so they show their source text.
+2. **Character sets** (`Tools/ReactiveLocalizer/Character Sets…`): for each language, the exact set of characters any table can display.
+   1. That's the language's own text, the fallback text its missing entries show, every plural and select form, its digits and number symbols, without rich text tags or control and formatting characters. Argument names and select keywords never show, so they don't count.
+   2. Picking several languages gives the set a font they share needs. Printable ASCII and extra characters can be added for text that arguments bring at runtime, such as player names.
+   3. The set is copied to the clipboard or saved as a text file in code point order, for the *Custom Characters* or *Characters from File* options of TextMeshPro's Font Asset Creator. `CharacterSets.Collect` is the editor API behind it.
 3. **Font coverage check** (TextMeshPro sample): lists every character a language's assigned font would render as an empty box.
 
 ## 15. Samples
@@ -493,7 +500,8 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
 | Runtime languages | `RegisterLanguage` |
 | Table sources | `EmbeddedTableSource`, `StreamingTableSource`, `FolderTableSource`, and in samples `AddressablesTableSource` |
 | Inspector fields | `EntryReference`, `CatalogReference`, `[EntryCatalog(typeof(...))]` |
-| Editor authoring API | `EntryAuthoring` |
+| Editor authoring API | `EntryAuthoring`, `CharacterSets` |
+| Developer tools (authoring) | `PseudoLocalization`, `CharacterSet` |
 | Exchange (authoring) | `ExportBook`, `CsvExchange`, `XlsxExchange`, `XliffExchange`, `LlmHandoff`, `ImportedFile`, `ImportPlanner`, `ImportPlan` |
 | Generated code | `LocalizationKeys`, `LocalizationLanguages` |
 | Sample access point | `GlobalLocalizer.Instance` |
