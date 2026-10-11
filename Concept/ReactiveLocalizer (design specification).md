@@ -409,27 +409,41 @@ The overlay switches the preview language, and every bound text in the open scen
 
 ### 12.6 Menus
 
-1. `Window/ReactiveLocalizer/Tables`
-2. `Tools/ReactiveLocalizer/…` (validate, import, export, character sets, write the agent guide)
+1. `Window/ReactiveLocalizer/Tables`, whose *Exchange* menu exports the open table or the whole catalog and imports files and replies.
+2. `Tools/ReactiveLocalizer/…`: *Validate*, *Export…*, *Import File…*, *Import Folder…*, *Import LLM Reply*, and in later steps character sets and the agent guide.
 3. `Assets/Create/ReactiveLocalizer/…` (catalog, table). Creating a catalog asks for its name, source language, culture and display name, and checks the culture against CLDR. Creating the first table of a project without a catalog asks the same first.
 
 ## 13. Exchange formats
 
-1. **XLSX:** one workbook, one sheet per table, with the grid's columns (key, context, maximum length, source, languages). The authoring assembly reads and writes the zip and XML itself, with no dependencies.
-2. **CSV:** one file per table, RFC 4180. It's saved as UTF-8 with a BOM so Excel doesn't garble non-Latin text, and import detects a comma, semicolon or tab separator.
-3. **XLIFF 1.2 and 2.0:** one file per target language.
-4. **LLM handoff:**
-   1. The tool exports missing or outdated entries as a text bundle. A rules header (keep ICU syntax, keep `\n`, respect the maximum length) is followed by the entries in `.lang` syntax, with their context and fingerprint tags.
-   2. The model's reply is imported from the clipboard.
+1. **Every format holds the same thing:** per entry, the key, the context (the comments above the source entry), the maximum length, the source text, and the text and state in each exported language. Spreadsheet formats write the key as `Shop.Purchase`, the same way as everywhere else, so renaming a file or sheet changes nothing. A key without its table belongs to the table the file or sheet is named after.
+2. **XLSX:** one workbook, one sheet per table, with the columns key, context, maximum length, source, then one per language headed by its name.
+   1. The authoring assembly reads and writes the zip and XML itself, with no dependencies. The zip container uses .NET's Deflate and checks every entry's checksum when reading.
+   2. Sheets keep the header row in view, wrap long texts, gray the columns translators only read, and tint outdated and unverified translations. Text cells are formatted as text, so a translation typed as `100` stays text, and a text starting with `=` is never a formula.
+   3. Reading takes what Excel, LibreOffice and Google Sheets save: shared or inline strings, rich text, numbers, and `_xHHHH_` escapes. A cell holding a spreadsheet error is reported and skipped.
+   4. A text longer than an Excel cell holds (32,767 characters) is left out of the workbook and reported.
+3. **CSV:** one file per table, RFC 4180, with the XLSX columns.
+   1. It's saved as UTF-8 with a BOM, so Excel doesn't garble non-Latin text, and with CRLF between rows.
+   2. Import detects a comma, semicolon or tab separator, and reads UTF-8 and UTF-16 (Excel's "Unicode text"). A file in another encoding is refused rather than read with its letters lost.
+   3. Spreadsheet applications take CSV cells starting with `=`, `+`, `-` or `@` for formulas, so XLSX is the format for spreadsheets. A spreadsheet error such as `#NAME?` in an imported cell is reported and skipped.
+4. **XLIFF 1.2 and 2.0:** one file per target language, `<Catalog>.<Language>.xlf`, with a file element per table.
+   1. Missing entries have no target, outdated and unverified ones are marked as needing review, and current ones as translated. The context is a note, and the maximum length is `maxwidth` in 1.2 and a note in 2.0.
+   2. Attributes in the package's own namespace name the catalog and both languages exactly, since culture tags can't name invented languages. The culture tag is the language's culture, else the first culture along its fallback chain (its plural rules come from there too), else `und`.
+   3. A character XML can't hold is a `<cp>` element in 2.0. XLIFF 1.2 has no way to write one, so those entries are left out and reported.
+   4. Reading takes either version, the inline markup translation tools add (`g`, `mrk`, `pc`, codes and their original data), and units split into segments. A unit translated in only some of its segments is skipped. A translation the tool marks translated, reviewed or final counts as checked.
+5. **LLM handoff:**
+   1. The tool exports entries in one language at a time as a text bundle, copied to the clipboard. A rules header (reply in the same format, keep keys and tags, keep ICU syntax, the language's plural forms, keep escapes and markup, respect the maximum length) is followed by `@catalog`, `@language` and `@table` lines and the entries in `.lang` syntax: the source text to translate, its fingerprint tag, its context, its maximum length, and the current translation when there is one.
+   2. The model's whole reply is imported from the clipboard. A code block is read on its own, so the model's words around it are left alone, and an entry before any `@table` line is reported.
    3. No API keys and no provider integration are needed.
-5. **Google Sheets:** two-way sync, shipped as a sample. It works through an Apps Script the sample provides, with a secret token, so the sheet stays private. The "publish to web" shortcut is never used, because it makes the sheet public.
-6. **Import rules, the same for every format:**
-   1. Imports change translations only by default. They never create, rename or delete keys. Rows with unknown keys are reported as orphans, and an empty cell never erases an existing translation.
-   2. Changes to the source column are ignored unless *import source changes* is ticked.
-   3. The source text in the file is what the translator saw, so it becomes the fingerprint. If the source changed since the export, the imported translation arrives already marked outdated.
-   4. Everything goes through the same ICU checks as the files.
-   5. A preview shows what will change (updated, new, outdated, rejected) before anything is written.
-7. **Export options:** which tables, which languages, and all entries or only missing or outdated ones.
+6. **Google Sheets:** two-way sync, shipped as a sample. It works through an Apps Script the sample provides, with a secret token, so the sheet stays private. The "publish to web" shortcut is never used, because it makes the sheet public.
+7. **Import rules, the same for every format:**
+   1. Imports change translations only by default. They never create, rename or delete keys. Rows with unknown keys are rejected as orphans, with the key they most likely meant, and an empty cell never erases an existing translation.
+   2. Changes to the source column are ignored unless *import source changes* is ticked, and the preview says how many source texts differ.
+   3. The source text in the file is what the translator saw, so it becomes the fingerprint. If the source changed since the export, the imported translation arrives already marked outdated. A fingerprint tag the file carries, as an LLM reply does, wins, and a file without source texts brings unverified translations.
+   4. A text equal to the current one changes nothing, so an outdated translation a translator left as it was stays outdated. Only XLIFF can confirm it as checked, through its state.
+   5. Everything goes through the same ICU checks as the files: each changed file is compiled as its import compiles it, and texts that fail are rejected with the reason. A file that has lines with errors is never rewritten.
+   6. The catalog is the one the file names, else the one that has most of its tables. Languages are matched by name, then by culture, then by the base culture (`ru-RU` finds `ru`). The preview lets the person change both, or skip a language.
+   7. A preview shows what will change (new, updated, outdated, confirmed, source texts, rejected, and how many are unchanged) before anything is written. The import is one step Undo can take back.
+8. **Export options:** which tables, which languages, and all entries, only missing ones, only outdated ones (unverified included), or both.
 
 ## 14. Developer tools
 
@@ -480,6 +494,7 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
 | Table sources | `EmbeddedTableSource`, `StreamingTableSource`, `FolderTableSource`, and in samples `AddressablesTableSource` |
 | Inspector fields | `EntryReference`, `CatalogReference`, `[EntryCatalog(typeof(...))]` |
 | Editor authoring API | `EntryAuthoring` |
+| Exchange (authoring) | `ExportBook`, `CsvExchange`, `XlsxExchange`, `XliffExchange`, `LlmHandoff`, `ImportedFile`, `ImportPlanner`, `ImportPlan` |
 | Generated code | `LocalizationKeys`, `LocalizationLanguages` |
 | Sample access point | `GlobalLocalizer.Instance` |
 | File attributes | `@source`, `@namespace`, `@formerly`, `@maximumLength`, `@loading`, `@delivery`, `@generateCode` |
