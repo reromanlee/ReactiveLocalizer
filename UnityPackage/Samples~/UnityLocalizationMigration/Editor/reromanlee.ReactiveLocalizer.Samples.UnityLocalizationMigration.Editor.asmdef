@@ -1,0 +1,29 @@
+{
+    "name": "reromanlee.ReactiveLocalizer.Samples.UnityLocalizationMigration.Editor",
+    "rootNamespace": "reromanlee.ReactiveLocalizer.Samples.UnityLocalizationMigration.Editor",
+    "references": [
+        "reromanlee.ReactiveLocalizer",
+        "reromanlee.ReactiveLocalizer.Authoring",
+        "Unity.Localization",
+        "Unity.Localization.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "REACTIVE_LOCALIZER_UNITY_LOCALIZATION"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.localization",
+            "expression": "1.4.0",
+            "define": "REACTIVE_LOCALIZER_UNITY_LOCALIZATION"
+        }
+    ],
+    "noEngineReferences": false
+}
