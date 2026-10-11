@@ -1,4 +1,4 @@
-# ReactiveLocalizer (Unreleased)
+# ReactiveLocalizer 1.0.0
 
 ### What's new
 
