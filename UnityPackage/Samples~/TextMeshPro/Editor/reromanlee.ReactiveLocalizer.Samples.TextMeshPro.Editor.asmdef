@@ -4,7 +4,9 @@
     "references": [
         "reromanlee.ReactiveLocalizer",
         "reromanlee.ReactiveLocalizer.Unity",
+        "reromanlee.ReactiveLocalizer.Authoring",
         "reromanlee.ReactiveLocalizer.Editor",
+        "reromanlee.ReactiveLocalizer.Samples.QuickStart",
         "reromanlee.ReactiveLocalizer.Samples.TextMeshPro",
         "Unity.TextMeshPro"
     ],

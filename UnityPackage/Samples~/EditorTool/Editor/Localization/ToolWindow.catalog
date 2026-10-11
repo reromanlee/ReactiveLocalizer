@@ -1,0 +1,12 @@
+# The languages of the Editor Tool sample's window. Its own catalog keeps the tool's texts apart from the game's, and
+# being inside an Editor folder keeps them out of player builds.
+
+@source English
+
+[English]
+DisplayName = English
+Culture = en
+
+[Russian]
+DisplayName = Русский
+Culture = ru

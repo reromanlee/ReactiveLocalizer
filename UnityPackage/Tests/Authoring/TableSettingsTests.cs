@@ -31,6 +31,20 @@ namespace reromanlee.ReactiveLocalizer.Tests
         }
 
         [Test]
+        public void Read_ReadsACustomDelivery()
+        {
+            List<DocumentIssue> issues = new();
+
+            TableSettings custom = TableSettings.Read(TableDocument.Parse("@delivery Custom\n\nLine = Text"), issues);
+            TableSettings unknown = TableSettings.Read(TableDocument.Parse("@delivery Cloud\n\nLine = Text"), issues);
+
+            Assert.That(custom.Delivery, Is.EqualTo(TableDelivery.Custom));
+            Assert.That(unknown.Delivery, Is.EqualTo(TableDelivery.Embedded));
+            Assert.That(issues.Count, Is.EqualTo(1));
+            Assert.That(issues[0].Message, Does.Contain("'Embedded', 'Streaming' or 'Custom'"));
+        }
+
+        [Test]
         public void Read_ReportsUnknownValuesAndKeepsTheDefault()
         {
             List<DocumentIssue> issues = new();

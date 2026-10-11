@@ -8,6 +8,35 @@ namespace reromanlee.ReactiveLocalizer.Tests
 {
     public class TableLoadingTests
     {
+        /// <summary>Takes every table request, then declines them all when told, like a source whose lookup is asynchronous.</summary>
+        private sealed class DecliningSource : ITableSource
+        {
+            private readonly System.Collections.Generic.List<TableReceiver> _receivers = new();
+
+            public int Count { get; private set; }
+
+            public bool TryLoad(in TableRequest request, TableReceiver receiver)
+            {
+                if (request.IsCatalog)
+                {
+                    return false;
+                }
+                _receivers.Add(receiver);
+                return true;
+            }
+
+            public void DeclineAll()
+            {
+                Count += _receivers.Count;
+                TableReceiver[] receivers = _receivers.ToArray();
+                _receivers.Clear();
+                foreach (TableReceiver receiver in receivers)
+                {
+                    receiver.Decline();
+                }
+            }
+        }
+
         private const string CatalogText =
             "@source English\n" +
             "[English]\nCulture = en\n" +
@@ -111,6 +140,39 @@ namespace reromanlee.ReactiveLocalizer.Tests
             Assert.That(localizer.Get(Title), Is.EqualTo("Magazin"));
             Assert.That(game.Requests, Is.EqualTo(new[] { "Catalog", "Shop.Russian" }));
             Assert.That(host.Reports, Is.Empty);
+        }
+
+        [Test]
+        public void SourceDecliningLater_PassesTheRequestOnSilently()
+        {
+            MemoryTableSource game = CreateSource("Purchase = Kupit\nTitle = Magazin");
+            DecliningSource declining = new();
+            TestHost host = new(declining, game);
+            using Localizer localizer = new(game.CatalogKey, host);
+
+            localizer.SetLanguageAsync(Russian);
+            localizer.InitializeAsync();
+            Assert.That(localizer.IsInitialized, Is.False);
+            declining.DeclineAll();
+
+            Assert.That(localizer.Get(Title), Is.EqualTo("Magazin"));
+            Assert.That(declining.Count, Is.EqualTo(1));
+            Assert.That(host.Reports, Is.Empty);
+        }
+
+        [Test]
+        public void SourceLanguageEverySourceDeclines_IsReported()
+        {
+            DecliningSource declining = new();
+            MemoryTableSource catalogOnly = new("Localization", CatalogText, ("Shop", "Russian", "Purchase = Kupit"));
+            TestHost host = new(declining, catalogOnly);
+            using Localizer localizer = new(catalogOnly.CatalogKey, host);
+
+            localizer.InitializeAsync();
+            declining.DeclineAll();
+
+            Assert.That(host.CountReports(ReportSeverity.Error), Is.EqualTo(1));
+            Assert.That(host.Reports[0].Message, Does.Contain("No table source has"));
         }
 
         [Test]

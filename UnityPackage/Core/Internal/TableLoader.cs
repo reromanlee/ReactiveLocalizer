@@ -156,11 +156,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
                     }
                     TableReceiver receiver = new(load.Request, _onReceived, load);
                     load.IsAwaiting = true;
-                    if (TryStart(source, load.Request, receiver))
-                    {
-                        load.HasAnySource = true;
-                    }
-                    else
+                    if (!TryStart(source, load.Request, receiver))
                     {
                         load.IsAwaiting = false;
                     }
@@ -190,6 +186,11 @@ namespace reromanlee.ReactiveLocalizer.Internal
         /// <summary>Checks a delivered table and adds it to the load, reporting whatever is wrong with it.</summary>
         private void Accept(LanguageLoad load, TableReceiver receiver)
         {
+            if (receiver.IsDeclined)
+            {
+                return;
+            }
+            load.HasAnySource = true;
             TableRequest request = receiver.Request;
             ReportSeverity severity = load.IsSource ? ReportSeverity.Error : ReportSeverity.Warning;
             if (!receiver.HasData)
@@ -315,7 +316,7 @@ namespace reromanlee.ReactiveLocalizer.Internal
 
             public bool IsFinished { get; set; }
 
-            /// <summary>Whether any source took the request.</summary>
+            /// <summary>Whether any source answered the request without declining it.</summary>
             public bool HasAnySource { get; set; }
 
             public bool HasLiveWaiter()

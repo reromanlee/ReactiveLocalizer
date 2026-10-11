@@ -7,7 +7,7 @@ namespace reromanlee.ReactiveLocalizer
     /// starting with a letter, at most <see cref="MaximumLength"/> characters. It keeps every name usable as a C#
     /// identifier and inside a file name on every platform.
     /// </summary>
-    internal static class NameRules
+    public static class NameRules
     {
         /// <summary>Longest name accepted: far above any real name, and short enough for every file system.</summary>
         public const int MaximumLength = 128;
@@ -36,7 +36,7 @@ namespace reromanlee.ReactiveLocalizer
 
         /// <summary>Throws when <paramref name="name"/> breaks the rule, naming the parameter it came from.</summary>
         /// <exception cref="ArgumentException"><paramref name="name"/> breaks the rule.</exception>
-        public static void ThrowIfInvalid(string name, string parameterName)
+        internal static void ThrowIfInvalid(string name, string parameterName)
         {
             if (!IsValid(name))
             {

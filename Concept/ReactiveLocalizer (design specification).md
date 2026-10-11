@@ -265,7 +265,8 @@ Purchase [3fa2c1] = Купить
    1. **In the editor,** tables are read straight from the imported assets. There is no build step, and they're always current.
    2. **`Embedded` (default):** a build step packs the table inside the build, readable synchronously on every platform.
    3. **`Streaming`:** a build step packs the table into StreamingAssets, read on demand by `StreamingTableSource`, which keeps huge content out of memory and, on WebGL, out of the initial download. Files are read on a thread pool thread where StreamingAssets is a folder, and through UnityWebRequest where it's a URL (Android, WebGL), which needs the built-in Unity Web Request module. A list of the packed files sits next to the catalog, so a table a language doesn't have is never requested.
-   4. **Anything else** (Addressables, a CDN) plugs into the same table-source interface. A source can attach warnings to what it delivers, which reach the host's diagnostics.
+   4. **`Custom`:** builds don't pack the table, since a table source of the project delivers it, such as the Addressables sample's. The editor still reads its files directly.
+   5. **Anything else** (Addressables, a CDN) plugs into the same table-source interface. A source can attach warnings to what it delivers, which reach the host's diagnostics. A source that learns only later that it doesn't have a table, as an asynchronous lookup does, declines the request, and the next source is asked with nothing reported.
 7. **Mods and downloaded translations** come from `FolderTableSource`: `<Table>.<Language>.lang` files anywhere under a folder, compiled when they're asked for, with their problems reported by file and line. The language sections of the folder's `.catalog` files define new languages, which `localizer.RegisterLanguage(...)` adds at runtime, before or after initialization.
 
 ## 9. Reactive layer
@@ -467,21 +468,22 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
 
 | Sample | Contents |
 |---|---|
-| Quick Start | The `GlobalLocalizer` access point, which a DI setup can also hand its own instance; saving the chosen language; a template for mapping the OS language; a language picker; a demo scene |
-| TextMeshPro | A component with the zero-allocation path, a *Localize* context-menu action that turns the current text into an entry and wires the component, fonts per language, the font coverage check |
-| uGUI Text | A component for legacy `Text` |
-| UI Toolkit | A data binding declared in UXML (Unity 6), plus a code-only binding for 2022.3 |
-| Addressables | `AddressablesTableSource` |
-| VContainer | An installer with async initialization |
-| R3 | Observables built from `ReactiveText` and bindings |
-| Google Sheets | Two-way sync through Apps Script |
+| Quick Start | The `GlobalLocalizer` access point, which a DI setup can also hand its own instance, and which other samples extend with table sources and runtime languages; saving the chosen language; a template for mapping the OS language; a language picker; `LocalizedBehaviour`, the base of the UI components; a demo scene |
+| TextMeshPro | `LocalizedTextMeshPro` with the zero-allocation path; `LanguageFonts`, a font per language that the Edit Mode preview switches too; the font coverage check in its Inspector; a *Localize* context-menu action that turns the current text into an entry and wires the component |
+| UI Toolkit | `LocalizedTextBinding`, a data binding declared in UXML or UI Builder (Unity 6); `BindText` from code and `LocalizedDocument`, which binds a UIDocument's elements by name, on every version |
+| uGUI Text | `LocalizedLegacyText` for legacy `Text`, with its own *Localize* action |
+| Addressables | `AddressablesTableSource` for `@delivery Custom` tables, and a menu that makes their files Addressables at the addresses it loads |
+| VContainer | `LocalizerInstaller`, which registers a catalog's localizer and initializes it asynchronously as the container starts |
+| R3 | `LocalizerObservables`: text, messages fed by other observables, the language, and `ReactiveText` as observables |
+| Google Sheets | Two-way sync through Apps Script, with a README that sets it up |
 | Editor Tool | An `EditorWindow` localized with its own catalog, for tool authors |
-| Mods | Fan translations read from a mods folder through the core's `FolderTableSource`, with their languages registered at runtime |
-| Unity Localization Migration | Converts locales to languages and string table collections to `.lang` files, converts simple Smart Format placeholders to ICU, and flags complex ones for review |
+| Mods | `ModTranslations`: fan translations read from a mods folder through the core's `FolderTableSource`, with their languages registered at runtime, and an example mod |
+| Unity Localization Migration | Converts locales to languages and string table collections to `.lang` files, converts simple placeholders to ICU, and flags the rest for review |
 
 1. **UniTask needs no sample:** it can already await `Task` directly.
 2. **UI samples find the localizer through Quick Start's access point,** so import Quick Start first.
-3. **In Edit Mode,** the access point returns the editor's preview instance, so components show the preview language live.
+3. **In Edit Mode,** the access point returns the editor's preview instance, so components show the preview language live. Scenes and prefabs still save the text and font they were authored with.
+4. **The migration keeps meaning, not syntax:** a numbered placeholder such as `{0}`, which projects fill with `string.Format`, becomes a named argument such as `{arg0}`, listed for renaming. Smart Format's plural and choose formatters and nested selectors stay as written, marked with a `MIGRATE` comment. Names become PascalCase, and the catalog is named `Localization`.
 
 ## 16. Naming reference
 
@@ -500,7 +502,9 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
 | Runtime languages | `RegisterLanguage` |
 | Table sources | `EmbeddedTableSource`, `StreamingTableSource`, `FolderTableSource`, and in samples `AddressablesTableSource` |
 | Inspector fields | `EntryReference`, `CatalogReference`, `[EntryCatalog(typeof(...))]` |
-| Editor authoring API | `EntryAuthoring`, `CharacterSets` |
+| Editor authoring API | `EntryAuthoring`, `CharacterSets`, `TranslationExchange` |
+| Message text for tools | `MessageText`, `NameRules` |
+| Sample components | `LocalizedBehaviour`, `LocalizedTextMeshPro`, `LocalizedLegacyText`, `LocalizedTextBinding`, `LocalizedDocument` |
 | Developer tools (authoring) | `PseudoLocalization`, `CharacterSet` |
 | Exchange (authoring) | `ExportBook`, `CsvExchange`, `XlsxExchange`, `XliffExchange`, `LlmHandoff`, `ImportedFile`, `ImportPlanner`, `ImportPlan` |
 | Generated code | `LocalizationKeys`, `LocalizationLanguages` |
@@ -517,7 +521,7 @@ Each sample is a thin adapter with its own folder and asmdef. Code that integrat
 2. **Unity lane,** mirroring Wireframes:
    1. GameCI tests in Edit and Play Mode on the oldest (2022.3) and newest Unity;
    2. compiler warnings from the package fail the run;
-   3. player builds for WebGL, Android, iOS, macOS and Linux catch problems that only show up in IL2CPP builds or after code stripping.
+   3. player builds for WebGL, Android, iOS, macOS and Linux catch problems that only show up in IL2CPP builds or after code stripping. The Linux build also compiles the samples for Addressables, Unity Localization and VContainer.
 3. **What the tests cover:**
    1. reading then writing a file gives byte-identical output, and randomized input (escapes, invisible characters, merge markers) never crashes the parser and always reports its position;
    2. plural tests are generated from CLDR's sample numbers for every plural form of every language;

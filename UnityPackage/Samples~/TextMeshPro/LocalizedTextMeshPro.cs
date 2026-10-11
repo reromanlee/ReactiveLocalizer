@@ -1,5 +1,4 @@
 using reromanlee.ReactiveLocalizer.Samples.QuickStart;
-using reromanlee.ReactiveLocalizer.Unity;
 using System;
 using System.Runtime.InteropServices;
 using TMPro;
@@ -8,145 +7,91 @@ using UnityEngine;
 namespace reromanlee.ReactiveLocalizer.Samples.TextMeshPro
 {
     /// <summary>
-    /// Shows an entry in the TextMeshPro text of its GameObject, in the current language, through every switch.
+    /// Shows an entry in the TextMeshPro text of its GameObject, in the current language, through every switch, in
+    /// the font its <see cref="LanguageFonts"/> picks for the language.
     /// </summary>
     /// <remarks>
-    /// It binds while enabled only, so a language switch never touches hidden UI, and text enabled later arrives in
-    /// the current language as it binds. In Edit Mode it previews the entry in the language the Scene view's overlay
-    /// picks, and the text it was authored with is what scenes and prefabs save.
+    /// Text arrives without creating strings: the characters go straight into the text's own buffer. In Edit Mode it
+    /// previews the entry, font included, in the language the Scene view's overlay picks, and scenes and prefabs save
+    /// the text and font it was authored with.
     /// </remarks>
-    [ExecuteAlways]
     [RequireComponent(typeof(TMP_Text))]
     [AddComponentMenu("ReactiveLocalizer/Localized TextMeshPro")]
-    public sealed class LocalizedTextMeshPro : MonoBehaviour
+    public sealed class LocalizedTextMeshPro : LocalizedBehaviour
     {
-        [Tooltip("The entry this text shows.")]
-        [SerializeField] private EntryReference _entry;
+        [Tooltip("The font each language shows this text with; empty to keep the text's own font in every language.")]
+        [SerializeField] private LanguageFonts _fonts;
 
         private TMP_Text _text;
-        private TextBinding _binding;
-        // The text the component had before previewing, which it gets back whenever the preview stops.
-        private string _authoredText;
-        private ILocalizer _preview;
-        private bool _isWaitingForPreview;
+        private LanguageInfo _fontLanguage;
+        private TMP_FontAsset _authoredFont;
+        private Material _authoredMaterial;
+        private TMP_FontAsset _shownFont;
 
-        /// <summary>The entry shown. Setting it while enabled shows the new entry right away.</summary>
-        public EntryReference Entry
+        /// <summary>The fonts the languages show this text with; null keeps the text's own font. Setting it applies it at the next text.</summary>
+        public LanguageFonts Fonts
         {
-            get => _entry;
+            get => _fonts;
             set
             {
-                _entry = value;
+                _fonts = value;
+                _fontLanguage = null;
                 Rebind();
             }
         }
 
-        private void OnEnable()
-        {
-            if (Application.isPlaying)
-            {
-                Bind();
-            }
-            else
-            {
-                ShowPreview();
-            }
-        }
+        private TMP_Text Target => _text != null ? _text : _text = GetComponent<TMP_Text>();
 
-        private void OnDisable()
+        protected override string Text
         {
-            _binding.Dispose();
-            if (!Application.isPlaying)
+            get => Target != null ? Target.text : null;
+            set
             {
-                EditModePreview.Untrack(this);
-                RestoreAuthoredText();
-            }
-        }
-
-        private void OnValidate()
-        {
-            // Picking another entry in the Inspector shows it at once. Text can't change during validation itself.
-#if UNITY_EDITOR
-            UnityEditor.EditorApplication.delayCall += Rebind;
-#else
-            Rebind();
-#endif
-        }
-
-        private void Rebind()
-        {
-            if (this == null || !isActiveAndEnabled)
-            {
-                return;
-            }
-            _binding.Dispose();
-            if (Application.isPlaying)
-            {
-                Bind();
-            }
-            else
-            {
-                ShowPreview();
-            }
-        }
-
-        /// <summary>Shows the entry in the preview language, keeping the authored text to give back.</summary>
-        private void ShowPreview()
-        {
-            _binding.Dispose();
-#if UNITY_EDITOR
-            // Scripts reloading can enable this before the editor's preview starts, which it does right after.
-            if (!EditModePreview.IsActive)
-            {
-                if (!_isWaitingForPreview)
+                if (Target != null)
                 {
-                    _isWaitingForPreview = true;
-                    UnityEditor.EditorApplication.delayCall += Rebind;
+                    Target.text = value;
                 }
-                return;
             }
-            _isWaitingForPreview = false;
-#endif
-            ILocalizer preview = _entry.IsEmpty ? null : GlobalLocalizer.For(_entry.ToCatalogKey());
-            if (preview == null)
-            {
-                RestoreAuthoredText();
-                return;
-            }
-            if (_text == null)
-            {
-                _text = GetComponent<TMP_Text>();
-            }
-            _authoredText ??= _text.text;
-            _preview = preview;
-            _binding = preview.BindCharacters(_entry.ToKey(), _text, static (text, characters) => Show(text, characters));
-            EditModePreview.Track(this, RestoreAuthoredText, ShowPreview);
         }
 
-        private void RestoreAuthoredText()
+        protected override TextBinding Bind(ILocalizer localizer, in EntryKey key)
         {
-            _binding.Dispose();
-            // Text typed over the preview is the new authored text, and stays.
-            if (_authoredText != null && _text != null && _preview != null && _text.text == _preview.Get(_entry.ToKey()))
-            {
-                _text.text = _authoredText;
-            }
-            _authoredText = null;
-            _preview = null;
+            _fontLanguage = null;
+            return localizer.BindCharacters(in key, this, static (component, characters) => component.Show(characters));
         }
 
-        private void Bind()
+        protected override void KeepAuthoredLook()
         {
-            if (_text == null)
+            if (Target != null)
             {
-                _text = GetComponent<TMP_Text>();
+                _authoredFont = Target.font;
+                _authoredMaterial = Target.fontSharedMaterial;
             }
-            _binding = GlobalLocalizer.For(_entry.ToCatalogKey()).BindCharacters(_entry.ToKey(), _text, static (text, characters) => Show(text, characters));
+        }
+
+        protected override void RestoreAuthoredLook()
+        {
+            // A font picked in the Inspector during the preview is the new authored font, and stays.
+            if (Target != null && _authoredFont != null && Target.font == _shownFont)
+            {
+                Target.font = _authoredFont;
+                Target.fontSharedMaterial = _authoredMaterial;
+            }
+            _authoredFont = null;
+            _authoredMaterial = null;
+            _shownFont = null;
+            _fontLanguage = null;
         }
 
         /// <summary>Shows characters without creating a string: the text component copies them into its own buffer.</summary>
-        private static void Show(TMP_Text text, ReadOnlyMemory<char> characters)
+        private void Show(ReadOnlyMemory<char> characters)
         {
+            TMP_Text text = Target;
+            if (text == null)
+            {
+                return;
+            }
+            ApplyFont(text);
             if (MemoryMarshal.TryGetArray(characters, out ArraySegment<char> segment))
             {
                 text.SetCharArray(segment.Array, segment.Offset, segment.Count);
@@ -154,6 +99,42 @@ namespace reromanlee.ReactiveLocalizer.Samples.TextMeshPro
             }
             // Characters a string already holds, such as a missing key's marker.
             text.SetText(characters.ToString());
+        }
+
+        /// <summary>Picks the font of the language the text is in, once per language.</summary>
+        private void ApplyFont(TMP_Text text)
+        {
+            LanguageInfo language = Localizer?.CurrentLanguage;
+            if (_fonts == null || language == null || language == _fontLanguage)
+            {
+                return;
+            }
+            _fontLanguage = language;
+            if (_authoredFont == null)
+            {
+                // The text's own font is what languages without a font of their own show.
+                KeepAuthoredLook();
+            }
+            TMP_FontAsset font = _fonts.GetFont(Localizer.Catalog, language, out Material material);
+            if (font == null)
+            {
+                font = _authoredFont;
+                material = _authoredMaterial;
+            }
+            if (font == null)
+            {
+                return;
+            }
+            if (text.font != font)
+            {
+                text.font = font;
+            }
+            Material shared = material != null ? material : font.material;
+            if (text.fontSharedMaterial != shared)
+            {
+                text.fontSharedMaterial = shared;
+            }
+            _shownFont = font;
         }
     }
 }

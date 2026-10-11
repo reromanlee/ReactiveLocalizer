@@ -1,0 +1,6 @@
+# A fan translation's language. It isn't in the game's catalog, so the Mods sample registers it at runtime. What it
+# doesn't translate comes from English.
+
+[Elvish]
+DisplayName = Elvish (fan translation)
+Fallback = English

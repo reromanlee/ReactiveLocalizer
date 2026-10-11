@@ -1,0 +1,24 @@
+{
+    "name": "reromanlee.ReactiveLocalizer.Samples.R3",
+    "rootNamespace": "reromanlee.ReactiveLocalizer.Samples.R3",
+    "references": [
+        "reromanlee.ReactiveLocalizer"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "REACTIVE_LOCALIZER_R3"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.cysharp.r3",
+            "expression": "1.0.0",
+            "define": "REACTIVE_LOCALIZER_R3"
+        }
+    ],
+    "noEngineReferences": false
+}

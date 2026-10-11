@@ -1,0 +1,80 @@
+/**
+ * ReactiveLocalizer sync for Google Sheets: the Unity editor pushes a catalog's tables here, one sheet per table, and
+ * pulls translators' edits back. Paste this file into Extensions > Apps Script of the spreadsheet, then follow the
+ * README of the Google Sheets sample.
+ *
+ * The spreadsheet stays private: it's never published to the web. Only requests carrying the token stored in the
+ * script's TOKEN property are answered, so keep the web app URL and the token as secret as a password.
+ */
+
+function doPost(e) {
+  try {
+    var request = JSON.parse(e.postData.contents);
+    var token = PropertiesService.getScriptProperties().getProperty('TOKEN');
+    if (!token || token.length < 16) {
+      return reply({ ok: false, error: 'The script has no TOKEN property of at least 16 characters yet; add one under Project Settings > Script Properties.' });
+    }
+    if (request.token !== token) {
+      return reply({ ok: false, error: 'The token is wrong.' });
+    }
+    var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    if (request.action === 'pull') {
+      return reply({ ok: true, error: '', sheets: pull(spreadsheet) });
+    }
+    if (request.action === 'push') {
+      push(spreadsheet, request.sheets || []);
+      return reply({ ok: true, error: '', sheets: [] });
+    }
+    return reply({ ok: false, error: 'Unknown action: ' + request.action });
+  } catch (error) {
+    return reply({ ok: false, error: String(error) });
+  }
+}
+
+/** Returns every sheet's cells as the text they show. */
+function pull(spreadsheet) {
+  return spreadsheet.getSheets().map(function (sheet) {
+    var values = sheet.getDataRange().getDisplayValues();
+    return { name: sheet.getName(), rows: values.map(function (cells) { return { cells: cells }; }) };
+  });
+}
+
+/** Replaces the contents of each pushed sheet, creating sheets that don't exist yet; other sheets stay as they are. */
+function push(spreadsheet, sheets) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    sheets.forEach(function (data) {
+      var sheet = spreadsheet.getSheetByName(data.name) || spreadsheet.insertSheet(data.name);
+      sheet.clearContents();
+      var rows = (data.rows || []).map(function (row) { return (row.cells || []).map(asText); });
+      if (rows.length === 0) {
+        return;
+      }
+      var width = rows.reduce(function (most, row) { return Math.max(most, row.length); }, 1);
+      rows.forEach(function (row) {
+        while (row.length < width) {
+          row.push('');
+        }
+      });
+      var range = sheet.getRange(1, 1, rows.length, width);
+      // Plain text format keeps a translation typed as 100 a text; a leading apostrophe keeps = from starting a formula.
+      range.setNumberFormat('@');
+      range.setValues(rows);
+      range.setWrap(true);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, width).setFontWeight('bold');
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function asText(value) {
+  var text = String(value);
+  return text.charAt(0) === '=' ? "'" + text : text;
+}
+
+function reply(body) {
+  return ContentService.createTextOutput(JSON.stringify(body)).setMimeType(ContentService.MimeType.JSON);
+}

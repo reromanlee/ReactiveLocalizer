@@ -11,8 +11,8 @@ namespace reromanlee.ReactiveLocalizer.Hosting
         /// doesn't have it, so the next source is asked.
         /// </summary>
         /// <remarks>
-        /// After returning true, the source calls <see cref="TableReceiver.Receive"/> or
-        /// <see cref="TableReceiver.Fail"/> exactly once, from any thread, either before returning or later.
+        /// After returning true, the source calls <see cref="TableReceiver.Receive"/>, <see cref="TableReceiver.Fail"/>
+        /// or <see cref="TableReceiver.Decline"/> exactly once, from any thread, either before returning or later.
         /// </remarks>
         bool TryLoad(in TableRequest request, TableReceiver receiver);
     }

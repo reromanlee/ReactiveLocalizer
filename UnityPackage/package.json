@@ -28,13 +28,58 @@
   "samples": [
     {
       "displayName": "Quick Start",
-      "description": "Everything a prototype needs: GlobalLocalizer, a project-wide access point that remembers the player's language and maps the OS language; a language picker; and a scene whose texts follow every switch, in English, Russian and an invented Pirate language that falls back to English.",
+      "description": "Everything a prototype needs: GlobalLocalizer, a project-wide access point that remembers the player's language and maps the OS language; a language picker; the base of the UI samples' components; and a scene whose texts follow every switch, in English, Russian and an invented Pirate language that falls back to English.",
       "path": "Samples~/QuickStart"
     },
     {
       "displayName": "TextMeshPro",
-      "description": "A component that shows an entry in a TextMeshPro text through every language switch, and a Localize action in the text's context menu that turns its current text into a new entry in one click. Import Quick Start first.",
+      "description": "A component that shows an entry in a TextMeshPro text through every language switch without creating strings, a font per language with a check of which characters each font can't draw, and a Localize action in the text's context menu that turns its current text into a new entry. Import Quick Start first.",
       "path": "Samples~/TextMeshPro"
+    },
+    {
+      "displayName": "UI Toolkit",
+      "description": "Entries in UI Toolkit text: a data binding declared in UXML or UI Builder on Unity 6, a BindText call from code on every version, and a component that localizes a UIDocument's elements by name with no code. Import Quick Start first.",
+      "path": "Samples~/UIToolkit"
+    },
+    {
+      "displayName": "uGUI Text",
+      "description": "A component that shows an entry in a legacy uGUI Text, with a Localize action in its context menu. Import Quick Start first.",
+      "path": "Samples~/UguiText"
+    },
+    {
+      "displayName": "Addressables",
+      "description": "Tables marked @delivery Custom load through Addressables, at addresses a menu sets up, so they download and update with the rest of the content; a table Addressables don't have falls back as usual. Requires Addressables; import Quick Start first.",
+      "path": "Samples~/Addressables"
+    },
+    {
+      "displayName": "VContainer",
+      "description": "An installer that registers a catalog's localizer with VContainer, initializes it asynchronously as the container starts, and hands it to Quick Start's access point. Requires VContainer; import Quick Start first.",
+      "path": "Samples~/VContainer"
+    },
+    {
+      "displayName": "R3",
+      "description": "R3 observables of localized text, of messages fed by other observables, and of the current language, each one a binding released with its subscription. Requires R3.",
+      "path": "Samples~/R3"
+    },
+    {
+      "displayName": "Google Sheets",
+      "description": "Two-way sync of a catalog with a private Google spreadsheet, one sheet per table, through an Apps Script that answers only a secret token and never publishes the sheet; pulls go through the import preview. Its README sets it up.",
+      "path": "Samples~/GoogleSheets"
+    },
+    {
+      "displayName": "Mods",
+      "description": "Fan translations read from a mods folder in the player's data: they patch shipped languages entry by entry and add new languages at runtime. Comes with an example mod to install. Import Quick Start first.",
+      "path": "Samples~/Mods"
+    },
+    {
+      "displayName": "Editor Tool",
+      "description": "An editor window localized with a catalog of its own inside an Editor folder, as package and tool authors ship it: its texts never mix with the game's and never reach a build.",
+      "path": "Samples~/EditorTool"
+    },
+    {
+      "displayName": "Unity Localization Migration",
+      "description": "Converts the project's Unity Localization locales and string table collections into a Localization catalog and .lang files, keys, comments and plain placeholders included, and lists what needs converting by hand. Requires Unity Localization.",
+      "path": "Samples~/UnityLocalizationMigration"
     }
   ]
 }

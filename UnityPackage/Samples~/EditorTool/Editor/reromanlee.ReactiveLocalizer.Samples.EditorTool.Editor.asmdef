@@ -1,0 +1,19 @@
+{
+    "name": "reromanlee.ReactiveLocalizer.Samples.EditorTool.Editor",
+    "rootNamespace": "reromanlee.ReactiveLocalizer.Samples.EditorTool.Editor",
+    "references": [
+        "reromanlee.ReactiveLocalizer",
+        "reromanlee.ReactiveLocalizer.Unity"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

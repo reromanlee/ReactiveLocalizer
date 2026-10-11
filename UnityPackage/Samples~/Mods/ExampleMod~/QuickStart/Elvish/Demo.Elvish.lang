@@ -1,0 +1,3 @@
+Title = ReactiveLocalizer: i-minna
+Greeting = Mae govannen! This greeting comes from a fan translation in the mods folder.
+Coins = Govad {coins, plural, one {# mirian} other {# miriain}}.

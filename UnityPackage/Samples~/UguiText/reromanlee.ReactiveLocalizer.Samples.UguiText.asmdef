@@ -1,0 +1,27 @@
+{
+    "name": "reromanlee.ReactiveLocalizer.Samples.UguiText",
+    "rootNamespace": "reromanlee.ReactiveLocalizer.Samples.UguiText",
+    "references": [
+        "reromanlee.ReactiveLocalizer",
+        "reromanlee.ReactiveLocalizer.Unity",
+        "reromanlee.ReactiveLocalizer.Samples.QuickStart",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "REACTIVE_LOCALIZER_UGUI"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.ugui",
+            "expression": "1.0.0",
+            "define": "REACTIVE_LOCALIZER_UGUI"
+        }
+    ],
+    "noEngineReferences": false
+}

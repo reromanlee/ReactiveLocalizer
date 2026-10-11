@@ -21,7 +21,7 @@ namespace reromanlee.ReactiveLocalizer.Documents
         /// <summary><c>@loading Preload</c> or <c>OnDemand</c>: when the table is in memory.</summary>
         public const string Loading = "loading";
 
-        /// <summary><c>@delivery Embedded</c> or <c>Streaming</c>: how the table ships in builds.</summary>
+        /// <summary><c>@delivery Embedded</c>, <c>Streaming</c> or <c>Custom</c>: how the table ships in builds.</summary>
         public const string Delivery = "delivery";
 
         /// <summary><c>@generateCode false</c>: the table gets no generated keys.</summary>
