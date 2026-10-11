@@ -229,6 +229,24 @@ namespace reromanlee.ReactiveLocalizer.Tests
         }
 
         [Test]
+        public void CharacterSets_CollectWhatEachLanguageShows()
+        {
+            CatalogKey game = new("Game");
+
+            CharacterSet russian = CharacterSets.Collect(game, new LanguageKey("Russian"));
+            CharacterSet pseudo = CharacterSets.Collect(game, PseudoLocalization.Language);
+
+            Assert.That(CharacterSets.GetLanguages(game).Count, Is.EqualTo(3));
+            Assert.That(russian.Contains('K'), Is.True, "Its own text");
+            Assert.That(russian.Contains(0x0423), Is.True, "Its plural forms");
+            Assert.That(russian.Contains('S') && russian.Contains('w'), Is.True, "The English text of what it lacks");
+            Assert.That(russian.Contains('B'), Is.False, "English text it translates");
+            Assert.That(russian.Contains(0x00A0), Is.True, "Its group separator");
+            Assert.That(pseudo.Contains(0x00FB), Is.True);
+            Assert.That(CharacterSets.Collect(game, new LanguageKey("Klingon")), Is.Null);
+        }
+
+        [Test]
         public void Validate_FindsBrokenAndRenamedReferencesInAssets()
         {
             EntryHolder holder = ScriptableObject.CreateInstance<EntryHolder>();
