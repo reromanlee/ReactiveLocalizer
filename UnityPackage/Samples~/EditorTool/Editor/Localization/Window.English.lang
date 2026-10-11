@@ -1,0 +1,14 @@
+# The window's title on its tab.
+Title = Localized Tool
+
+# Explains what the window shows.
+Description = This window is localized with a catalog of its own inside an Editor folder, so its texts never mix with the game's and never ship in a player build.
+
+# Labels the language picker in the toolbar.
+Language = Language
+
+# The button that counts its clicks.
+Click = Click me
+
+# How many times the button was clicked.
+Clicks = {count, plural, =0 {Not clicked yet} one {Clicked # time} other {Clicked # times}}
