@@ -7,6 +7,12 @@ namespace reromanlee.ReactiveLocalizer
         Embedded = 0,
 
         /// <summary>Shipped as separate files read on demand, which keeps huge content out of memory.</summary>
-        Streaming = 1
+        Streaming = 1,
+
+        /// <summary>
+        /// Delivered by a table source of the project's own, such as Addressables or a server, so builds don't pack
+        /// it. The editor still reads its files directly.
+        /// </summary>
+        Custom = 2
     }
 }

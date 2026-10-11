@@ -12,8 +12,9 @@ namespace reromanlee.ReactiveLocalizer.Editor
     /// Packs every runtime catalog and its tables into the build: <see cref="TableDelivery.Embedded"/> tables into the
     /// Resources <see cref="EmbeddedTableSource"/> reads synchronously on every platform, and
     /// <see cref="TableDelivery.Streaming"/> tables into the StreamingAssets <see cref="StreamingTableSource"/> reads
-    /// on demand. Development builds also get the pseudo language, unless the project settings turn it off. The packed
-    /// files exist only while a build runs.
+    /// on demand. <see cref="TableDelivery.Custom"/> tables stay out, for the project's own source to deliver.
+    /// Development builds also get the pseudo language, unless the project settings turn it off. The packed files exist
+    /// only while a build runs.
     /// </summary>
     /// <remarks>
     /// Catalogs in Editor folders stay out. A failed build never reaches its postprocess step, so the first editor
@@ -73,6 +74,10 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 List<(string Language, string Table)> streamed = new();
                 foreach (IndexedTable table in catalog.Tables)
                 {
+                    if (table.Settings.Delivery == TableDelivery.Custom)
+                    {
+                        continue;
+                    }
                     foreach (LanguageInfo language in packed.Languages)
                     {
                         byte[] data = ReadTable(catalog, table, language.Key);

@@ -173,6 +173,7 @@ namespace reromanlee.ReactiveLocalizer.Tests
         {
             File.WriteAllText($"{Folder}/Feature/Dialogue.English.lang", "@delivery Streaming\n\nLine1 = Hello\n");
             File.WriteAllText($"{Folder}/Feature/Dialogue.Russian.lang", "Line1 = Privet\n");
+            File.WriteAllText($"{Folder}/Feature/Voice.English.lang", "@delivery Custom\n\nLine1 = Hello\n");
             CatalogLayout.Refresh();
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
             CatalogIndex.Invalidate();
@@ -188,6 +189,8 @@ namespace reromanlee.ReactiveLocalizer.Tests
                 Assert.That(File.Exists($"{output}/Streaming/Game/English/Dialogue.bytes"), Is.True);
                 Assert.That(File.Exists($"{output}/Streaming/Game/Russian/Dialogue.bytes"), Is.True);
                 Assert.That(File.ReadAllText($"{output}/Resources/Game/streaming.bytes"), Is.EqualTo("English/Dialogue\nRussian/Dialogue\n"));
+                Assert.That(File.Exists($"{output}/Resources/Game/English/Voice.bytes"), Is.False);
+                Assert.That(File.Exists($"{output}/Streaming/Game/English/Voice.bytes"), Is.False);
             }
             finally
             {

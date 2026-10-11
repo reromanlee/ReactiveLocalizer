@@ -139,7 +139,7 @@ namespace reromanlee.ReactiveLocalizer.Tables
                     !reader.TryReadUInt64(out ulong keysHash) ||
                     !NameRules.IsValid(tableName) ||
                     loading > (byte)TableLoading.OnDemand ||
-                    delivery > (byte)TableDelivery.Streaming)
+                    delivery > (byte)TableDelivery.Custom)
                 {
                     error = "A table of the catalog is damaged.";
                     return false;

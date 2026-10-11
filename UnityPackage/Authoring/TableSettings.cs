@@ -49,34 +49,36 @@ namespace reromanlee.ReactiveLocalizer.Authoring
                 switch (setting.Name)
                 {
                     case DocumentNames.Loading:
-                        loading = ReadChoice(setting, TableLoading.Preload, TableLoading.OnDemand, loading, issues);
+                        loading = ReadChoice(setting, new[] { TableLoading.Preload, TableLoading.OnDemand }, loading, issues);
                         break;
                     case DocumentNames.Delivery:
-                        delivery = ReadChoice(setting, TableDelivery.Embedded, TableDelivery.Streaming, delivery, issues);
+                        delivery = ReadChoice(setting, new[] { TableDelivery.Embedded, TableDelivery.Streaming, TableDelivery.Custom }, delivery, issues);
                         break;
                     case DocumentNames.GenerateCode:
-                        generatesCode = ReadChoice(setting, true, false, generatesCode, issues);
+                        generatesCode = ReadChoice(setting, new[] { true, false }, generatesCode, issues);
                         break;
                 }
             }
             return new TableSettings(loading, delivery, generatesCode);
         }
 
-        /// <summary>Returns which of two allowed values a setting names, ignoring case, or reports it and keeps <paramref name="fallback"/>.</summary>
-        private static T ReadChoice<T>(DocumentProperty setting, T first, T second, T fallback, ICollection<DocumentIssue> issues)
+        /// <summary>Returns which of the allowed values a setting names, ignoring case, or reports it and keeps <paramref name="fallback"/>.</summary>
+        private static T ReadChoice<T>(DocumentProperty setting, T[] choices, T fallback, ICollection<DocumentIssue> issues)
         {
-            string firstName = ToSettingText(first);
-            string secondName = ToSettingText(second);
-            if (string.Equals(setting.Value, firstName, StringComparison.OrdinalIgnoreCase))
+            string[] names = new string[choices.Length];
+            for (int i = 0; i < choices.Length; i++)
             {
-                return first;
+                names[i] = ToSettingText(choices[i]);
+                if (string.Equals(setting.Value, names[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    return choices[i];
+                }
             }
-            if (string.Equals(setting.Value, secondName, StringComparison.OrdinalIgnoreCase))
-            {
-                return second;
-            }
+            string allowed = names.Length == 2
+                ? $"'{names[0]}' or '{names[1]}'"
+                : $"'{string.Join("', '", names, 0, names.Length - 1)}' or '{names[names.Length - 1]}'";
             issues?.Add(new DocumentIssue(IssueSeverity.Error, setting.Line, 1,
-                $"'@{setting.Name}' is '{firstName}' or '{secondName}', not '{setting.Value}'; it stays '{ToSettingText(fallback)}'."));
+                $"'@{setting.Name}' is {allowed}, not '{setting.Value}'; it stays '{ToSettingText(fallback)}'."));
             return fallback;
         }
 
