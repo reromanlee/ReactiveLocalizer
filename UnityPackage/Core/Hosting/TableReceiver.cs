@@ -6,7 +6,8 @@ namespace reromanlee.ReactiveLocalizer.Hosting
 {
     /// <summary>
     /// Takes the answer to one <see cref="TableRequest"/>: a table source calls <see cref="Receive"/> with the compiled
-    /// data, or <see cref="Fail"/> with the reason it couldn't deliver it.
+    /// data, <see cref="Fail"/> with the reason it couldn't deliver it, or <see cref="Decline"/> when it turns out not
+    /// to have it.
     /// </summary>
     /// <remarks>
     /// The first call counts and every later one is ignored. Either can come from any thread, before
@@ -39,6 +40,9 @@ namespace reromanlee.ReactiveLocalizer.Hosting
         internal bool HasData { get; private set; }
 
         internal string FailureReason { get; private set; }
+
+        /// <summary>Whether the source answered that it doesn't have what was asked after all.</summary>
+        internal bool IsDeclined { get; private set; }
 
         /// <summary>
         /// Delivers the compiled data asked for. Empty data counts as a failure. The data must stay unchanged until it
@@ -86,6 +90,22 @@ namespace reromanlee.ReactiveLocalizer.Hosting
                 _warnings = null;
                 return warnings;
             }
+        }
+
+        /// <summary>
+        /// Answers that the source doesn't have what was asked after all, as when a lookup it had to wait for finds
+        /// nothing, so the next source is asked as if <see cref="ITableSource.TryLoad"/> had returned false, and nothing
+        /// is reported. A catalog that no source delivers still fails initialization.
+        /// </summary>
+        public void Decline()
+        {
+            if (Interlocked.Exchange(ref _isCompleted, 1) != 0)
+            {
+                return;
+            }
+            IsDeclined = true;
+            FailureReason = "The source doesn't have it.";
+            _onCompleted(this);
         }
 
         /// <summary>Reports that the data can't be delivered, and why.</summary>
