@@ -138,6 +138,15 @@ namespace reromanlee.ReactiveLocalizer.Editor
             add.clicked += () => AddEntry(ToScreen(add.worldBound));
             toolbar.Add(add);
             toolbar.Add(new ToolbarButton(LocalizationValidation.ValidateProject) { text = "Validate", tooltip = "Validate every catalog and reference, listing problems in the Console." });
+            ToolbarMenu exchange = new() { text = "Exchange", tooltip = "Export translations for translators, or import what they send back." };
+            exchange.menu.AppendAction("Export This Table...", _ => ExportWindow.Open(_catalogName, _tableName),
+                _ => _sheet != null ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            exchange.menu.AppendAction("Export...", _ => ExportWindow.Open(_catalogName, null));
+            exchange.menu.AppendSeparator();
+            exchange.menu.AppendAction("Import File...", _ => ImportWindow.ImportFile());
+            exchange.menu.AppendAction("Import Folder...", _ => ImportWindow.ImportFolder());
+            exchange.menu.AppendAction("Import LLM Reply", _ => ImportWindow.ImportReply());
+            toolbar.Add(exchange);
             return toolbar;
         }
 
