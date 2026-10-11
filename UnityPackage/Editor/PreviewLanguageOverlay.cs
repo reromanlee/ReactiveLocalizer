@@ -1,3 +1,4 @@
+using reromanlee.ReactiveLocalizer.Authoring;
 using System;
 using System.Collections.Generic;
 using UnityEditor;
@@ -40,7 +41,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
             return root;
         }
 
-        /// <summary>Lists the source language and every language of the project's catalogs, selecting the preview language.</summary>
+        /// <summary>Lists the source language, every language of the project's catalogs and the pseudo language, selecting the preview language.</summary>
         private void Refresh()
         {
             List<string> choices = new() { SourceChoice };
@@ -58,6 +59,10 @@ namespace reromanlee.ReactiveLocalizer.Editor
                         choices.Add(catalog.Info.Languages[i].Name);
                     }
                 }
+            }
+            if (choices.Count > 1 && seen.Add(PseudoLocalization.LanguageName))
+            {
+                choices.Add(PseudoLocalization.LanguageName);
             }
             string preview = LocalizationUserSettings.instance.PreviewLanguage;
             string selected = choices.Find(choice => string.Equals(choice, preview, StringComparison.OrdinalIgnoreCase)) ?? SourceChoice;

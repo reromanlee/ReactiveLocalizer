@@ -74,6 +74,9 @@ namespace reromanlee.ReactiveLocalizer.Tables
         /// <summary>Every text of the table, which entries and compiled messages point into.</summary>
         public char[] Characters => _characters;
 
+        /// <summary>Returns the key hash of the entry at <paramref name="index"/>.</summary>
+        public ulong GetHash(int index) => _hashes[index];
+
         /// <summary>
         /// Finds the entry with <paramref name="entryHash"/>, or the entry an alias with that hash points to.
         /// </summary>

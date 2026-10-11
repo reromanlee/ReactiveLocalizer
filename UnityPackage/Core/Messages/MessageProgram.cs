@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace reromanlee.ReactiveLocalizer.Messages
 {
@@ -24,6 +25,63 @@ namespace reromanlee.ReactiveLocalizer.Messages
         public static ulong ReadUInt64(int[] program, int index) => unchecked((uint)program[index] | ((ulong)(uint)program[index + 1] << 32));
 
         public static double ReadDouble(int[] program, int index) => BitConverter.Int64BitsToDouble(unchecked((long)ReadUInt64(program, index)));
+
+        /// <summary>
+        /// Adds the start and length in the character buffer of every literal text of the verified message at
+        /// <paramref name="start"/> to <paramref name="texts"/>, every plural and select form included, in order.
+        /// </summary>
+        public static void CollectTexts(int[] program, int start, List<(int Start, int Length)> texts)
+        {
+            int bodyStart = GetBodyStart(program, start);
+            CollectTexts(program, bodyStart, program[bodyStart - 1], texts);
+        }
+
+        private static void CollectTexts(int[] program, int position, int end, List<(int Start, int Length)> texts)
+        {
+            while (position < end)
+            {
+                switch (program[position])
+                {
+                    case MessageOperation.Text:
+                        texts.Add((program[position + 1], program[position + 2]));
+                        position += 3;
+                        break;
+                    case MessageOperation.Plain:
+                        position += 2;
+                        break;
+                    case MessageOperation.Number:
+                        position += 3;
+                        break;
+                    case MessageOperation.Custom:
+                        position += 8;
+                        break;
+                    case MessageOperation.Pound:
+                        position++;
+                        break;
+                    case MessageOperation.Plural:
+                        int form = position + 7;
+                        for (int i = program[position + 6]; i > 0; i--)
+                        {
+                            CollectTexts(program, form + 4, program[form + 3], texts);
+                            form = program[form + 3];
+                        }
+                        position = program[position + 5];
+                        break;
+                    case MessageOperation.Select:
+                        int branch = position + 4;
+                        for (int i = program[position + 3]; i > 0; i--)
+                        {
+                            CollectTexts(program, branch + 3, program[branch + 2], texts);
+                            branch = program[branch + 2];
+                        }
+                        position = program[position + 2];
+                        break;
+                    default:
+                        // Verification rejects unknown operations, so this only guards against an unverified program.
+                        return;
+                }
+            }
+        }
 
         /// <summary>Checks the message starting at <paramref name="start"/>, failing with a reason instead of throwing.</summary>
         public static bool TryVerify(int[] program, int start, int characterCount, out string error)

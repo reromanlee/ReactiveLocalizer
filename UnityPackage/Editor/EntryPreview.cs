@@ -74,7 +74,12 @@ namespace reromanlee.ReactiveLocalizer.Editor
                 return null;
             }
             string text = source.Value;
-            if (NameRules.IsValid(language) && !string.Equals(language, catalog.Info?.SourceLanguage.Name, StringComparison.OrdinalIgnoreCase) &&
+            if (NameRules.IsValid(language) && PseudoTables.IsPseudo(catalog, new LanguageKey(language)))
+            {
+                text = PseudoLocalization.Transform(text);
+                isTranslated = true;
+            }
+            else if (NameRules.IsValid(language) && !string.Equals(language, catalog.Info?.SourceLanguage.Name, StringComparison.OrdinalIgnoreCase) &&
                 table.TryGetFile(new LanguageKey(language), out string path) &&
                 CatalogIndex.ReadTableDocument(path).TryGetEntry(entryName, out TableDocumentEntry translation))
             {

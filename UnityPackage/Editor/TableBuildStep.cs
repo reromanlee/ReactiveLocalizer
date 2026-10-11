@@ -12,7 +12,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
     /// Packs every runtime catalog and its tables into the build: <see cref="TableDelivery.Embedded"/> tables into the
     /// Resources <see cref="EmbeddedTableSource"/> reads synchronously on every platform, and
     /// <see cref="TableDelivery.Streaming"/> tables into the StreamingAssets <see cref="StreamingTableSource"/> reads
-    /// on demand. The packed files exist only while a build runs.
+    /// on demand. Development builds also get the pseudo language, unless the project settings turn it off. The packed
+    /// files exist only while a build runs.
     /// </summary>
     /// <remarks>
     /// Catalogs in Editor folders stay out. A failed build never reaches its postprocess step, so the first editor
@@ -39,7 +40,8 @@ namespace reromanlee.ReactiveLocalizer.Editor
             {
                 SessionState.SetBool(CreatedStreamingAssetsKey, true);
             }
-            Pack($"{GeneratedFolder}/Resources/{EmbeddedTableSource.ResourcesRoot}", StreamingFolder);
+            bool isPseudoIncluded = (report.summary.options & BuildOptions.Development) != 0 && LocalizationSettings.instance.IsOfferingPseudoLocalization;
+            Pack($"{GeneratedFolder}/Resources/{EmbeddedTableSource.ResourcesRoot}", StreamingFolder, isPseudoIncluded);
             AssetDatabase.Refresh();
             EditorApplication.update -= RemoveAfterBuild;
             EditorApplication.update += RemoveAfterBuild;
@@ -54,7 +56,10 @@ namespace reromanlee.ReactiveLocalizer.Editor
         /// Writes the compiled catalogs and Embedded tables under <paramref name="resourcesRoot"/>, and the Streaming
         /// tables under <paramref name="streamingRoot"/>, with each catalog's list of them next to it in Resources.
         /// </summary>
-        public static void Pack(string resourcesRoot, string streamingRoot)
+        /// <param name="resourcesRoot">The Resources folder the catalogs and Embedded tables go to.</param>
+        /// <param name="streamingRoot">The folder the Streaming tables go to.</param>
+        /// <param name="isPseudoIncluded">Whether catalogs get the pseudo language, with its tables made from the source-language files.</param>
+        public static void Pack(string resourcesRoot, string streamingRoot, bool isPseudoIncluded)
         {
             foreach (IndexedCatalog catalog in CatalogIndex.Catalogs)
             {
@@ -63,29 +68,26 @@ namespace reromanlee.ReactiveLocalizer.Editor
                     continue;
                 }
                 string catalogFolder = $"{resourcesRoot}/{catalog.Name}";
-                Write($"{catalogFolder}/{EmbeddedTableSource.CatalogFileName}.bytes", CompiledCatalog.Write(catalog.Info));
+                CatalogInfo packed = PseudoTables.GetCatalog(catalog, isPseudoIncluded);
+                Write($"{catalogFolder}/{EmbeddedTableSource.CatalogFileName}.bytes", CompiledCatalog.Write(packed));
                 List<(string Language, string Table)> streamed = new();
                 foreach (IndexedTable table in catalog.Tables)
                 {
-                    foreach (LanguageInfo language in catalog.Info.Languages)
+                    foreach (LanguageInfo language in packed.Languages)
                     {
-                        if (!table.TryGetFile(language.Key, out string path))
-                        {
-                            continue;
-                        }
-                        TableAsset asset = AssetDatabase.LoadAssetAtPath<TableAsset>(path);
-                        if (asset == null || asset.Data.IsEmpty)
+                        byte[] data = ReadTable(catalog, table, language.Key);
+                        if (data == null || data.Length == 0)
                         {
                             continue;
                         }
                         if (table.Settings.Delivery == TableDelivery.Streaming)
                         {
-                            Write($"{streamingRoot}/{StreamingTableSource.GetTablePath(catalog.Name, language.Name, table.Name)}", asset.Data.ToArray());
+                            Write($"{streamingRoot}/{StreamingTableSource.GetTablePath(catalog.Name, language.Name, table.Name)}", data);
                             streamed.Add((language.Name, table.Name));
                         }
                         else
                         {
-                            Write($"{catalogFolder}/{language.Name}/{table.Name}.bytes", asset.Data.ToArray());
+                            Write($"{catalogFolder}/{language.Name}/{table.Name}.bytes", data);
                         }
                     }
                 }
@@ -94,6 +96,26 @@ namespace reromanlee.ReactiveLocalizer.Editor
                     Write($"{catalogFolder}/{StreamingTableSource.ManifestFileName}.bytes", StreamingTableSource.WriteManifest(streamed));
                 }
             }
+        }
+
+        /// <summary>Returns the compiled table of <paramref name="table"/> in <paramref name="language"/>, or null when there is none.</summary>
+        private static byte[] ReadTable(IndexedCatalog catalog, IndexedTable table, LanguageKey language)
+        {
+            if (PseudoTables.IsPseudo(catalog, language))
+            {
+                byte[] pseudo = PseudoTables.Compile(catalog, table, out string problem);
+                if (problem != null)
+                {
+                    UnityEngine.Debug.LogWarning(problem);
+                }
+                return pseudo;
+            }
+            if (!table.TryGetFile(language, out string path))
+            {
+                return null;
+            }
+            TableAsset asset = AssetDatabase.LoadAssetAtPath<TableAsset>(path);
+            return asset != null ? asset.Data.ToArray() : null;
         }
 
         [InitializeOnLoadMethod]

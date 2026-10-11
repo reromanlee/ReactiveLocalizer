@@ -12,28 +12,32 @@
 8. Exchange with translators: an XLSX workbook, CSV files or XLIFF 1.2 and 2.0 files, exported with a choice of tables, languages, and all entries or only missing or outdated ones. Keys are written `Shop.Purchase`, so renaming a file or sheet changes nothing.
 9. Imports that change translations only, never keys: a preview lists every new, updated, outdated, confirmed and rejected text before anything is written, each compiled like the files, and the whole import is one step Undo can take back. The source text in the file becomes the fingerprint, so a translation of an older text arrives outdated.
 10. An LLM handoff: missing or outdated entries copied as a text bundle with rules for the model, its plural forms included, and the model's reply imported from the clipboard, with no API keys.
-11. Bindings that update text on every language switch without allocating, and messages that are formatted again only when their arguments change.
-12. Live reload: saving a table file updates bound text at once, in Play Mode and Edit Mode.
-13. A Scene view overlay that picks the preview language. Components preview their text live in Edit Mode through `EditModePreview`, and scenes and prefabs always save the text they were authored with.
-14. Rename, move and delete entries across every language at once. Moved entries keep working through `@formerly Table.Entry`, at runtime and in generated code.
-15. Tables loaded on demand: `@loading OnDemand` tables stay in memory only while bindings or `HoldTable` handles use them, and follow every language switch while they do.
-16. Streaming delivery: `@delivery Streaming` tables ship in StreamingAssets and load without blocking the main thread, through UnityWebRequest on Android and WebGL.
-17. Fan translations and mods: `FolderTableSource` compiles `.lang` files from a folder at runtime, `RegisterLanguage` adds new languages, and sources asked first patch shipped languages entry by entry.
-18. Plural rules and number formats for every CLDR 48 locale, built in without `CultureInfo`, with digits and separators each language can override.
-19. Fallback languages loaded only for tables a translation leaves gaps in, so a complete translation costs no extra memory.
-20. `ReactiveText` for view models and data binding, and `BindCharacters` for text that updates without allocating, such as TextMeshPro's.
-21. Import checks that report problems at their line and column, check every translation against its source text and the plural forms of its language, and suggest the key an orphan most likely meant.
-22. *Show source change* finds the source text an outdated translation was made from in git, and marks the words that changed.
-23. One canonical layout for table files, written by every tool, with keys in natural order, such as `Line9` before `Line10`.
-24. Creating a catalog asks for its source language and culture, and checks the culture against CLDR.
-25. Lock-free lookups from any thread, with language switches applied all at once on the main thread, and rapid switches sharing what they load.
-26. Missing keys shown as `[Table.Key]` in every build and reported once, and failures that never throw into game code.
-27. Unity integration: `UnityHost`, tables packed into builds, the editor reading table files directly, and `EntryReference` and `CatalogReference` Inspector fields.
-28. Quick Start and TextMeshPro samples, the TextMeshPro component previewing its text in Edit Mode.
+11. Pseudo-localization: a `Pseudo` language made from the source text, accented, a third longer and bracketed, so hardcoded text, truncation and overflow show before any translation exists. The editor previews it, Play Mode and development builds list it, and release builds never ship it.
+12. Character sets, `Tools/ReactiveLocalizer/Character Sets`: every character a language can show, the fallback text of missing entries and number symbols included, copied or saved for TextMeshPro's Font Asset Creator.
+13. Bindings that update text on every language switch without allocating, and messages that are formatted again only when their arguments change.
+14. Live reload: saving a table file updates bound text at once, in Play Mode and Edit Mode.
+15. A Scene view overlay that picks the preview language. Components preview their text live in Edit Mode through `EditModePreview`, and scenes and prefabs always save the text they were authored with.
+16. Rename, move and delete entries across every language at once. Moved entries keep working through `@formerly Table.Entry`, at runtime and in generated code.
+17. Tables loaded on demand: `@loading OnDemand` tables stay in memory only while bindings or `HoldTable` handles use them, and follow every language switch while they do.
+18. Streaming delivery: `@delivery Streaming` tables ship in StreamingAssets and load without blocking the main thread, through UnityWebRequest on Android and WebGL.
+19. Fan translations and mods: `FolderTableSource` compiles `.lang` files from a folder at runtime, `RegisterLanguage` adds new languages, and sources asked first patch shipped languages entry by entry.
+20. Plural rules and number formats for every CLDR 48 locale, built in without `CultureInfo`, with digits and separators each language can override.
+21. Fallback languages loaded only for tables a translation leaves gaps in, so a complete translation costs no extra memory.
+22. `ReactiveText` for view models and data binding, and `BindCharacters` for text that updates without allocating, such as TextMeshPro's.
+23. Import checks that report problems at their line and column, check every translation against its source text and the plural forms of its language, and suggest the key an orphan most likely meant.
+24. *Show source change* finds the source text an outdated translation was made from in git, and marks the words that changed.
+25. One canonical layout for table files, written by every tool, with keys in natural order, such as `Line9` before `Line10`.
+26. Creating a catalog asks for its source language and culture, and checks the culture against CLDR.
+27. Lock-free lookups from any thread, with language switches applied all at once on the main thread, and rapid switches sharing what they load.
+28. Missing keys shown as `[Table.Key]` in every build and reported once, and failures that never throw into game code.
+29. Unity integration: `UnityHost`, tables packed into builds, the editor reading table files directly, and `EntryReference` and `CatalogReference` Inspector fields.
+30. Quick Start and TextMeshPro samples, the TextMeshPro component previewing its text in Edit Mode.
 
 ### Known issues
 
-1. Pseudo-localization, character sets and the remaining samples, Google Sheets sync among them, aren't available yet.
+1. The remaining samples, the TextMeshPro font coverage check and Google Sheets sync among them, aren't available yet.
 2. Undo keeps whole copies of the table files each edit changes, so many edits of one very large table take a lot of memory.
 3. Spreadsheet applications take CSV texts starting with = for formulas, so exchange XLSX with spreadsheets; formula errors in an imported CSV are rejected.
 4. XLIFF 1.2 can't hold control characters, so entries with one are left out of it and reported; XLIFF 2.0 and XLSX keep them.
+5. Tables delivered by custom sources, such as Addressables, have no pseudo version, so pseudo-localization shows their source text.
+6. Character sets can't know text that arguments bring at runtime, such as player names; the window adds printable ASCII or extra characters for it.

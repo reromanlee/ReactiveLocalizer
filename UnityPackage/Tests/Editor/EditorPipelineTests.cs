@@ -179,9 +179,10 @@ namespace reromanlee.ReactiveLocalizer.Tests
             string output = Path.Combine(Path.GetTempPath(), "ReactiveLocalizerPack", System.Guid.NewGuid().ToString("N"));
             try
             {
-                TableBuildStep.Pack($"{output}/Resources", $"{output}/Streaming");
+                TableBuildStep.Pack($"{output}/Resources", $"{output}/Streaming", false);
 
                 Assert.That(File.Exists($"{output}/Resources/Game/catalog.bytes"), Is.True);
+                Assert.That(Directory.Exists($"{output}/Resources/Game/Pseudo"), Is.False);
                 Assert.That(File.Exists($"{output}/Resources/Game/Russian/Shop.bytes"), Is.True);
                 Assert.That(File.Exists($"{output}/Resources/Game/English/Dialogue.bytes"), Is.False);
                 Assert.That(File.Exists($"{output}/Streaming/Game/English/Dialogue.bytes"), Is.True);
@@ -192,6 +193,57 @@ namespace reromanlee.ReactiveLocalizer.Tests
             {
                 Directory.Delete(output, true);
             }
+        }
+
+        [Test]
+        public void Pack_ForADevelopmentBuild_AddsThePseudoLanguage()
+        {
+            string output = Path.Combine(Path.GetTempPath(), "ReactiveLocalizerPack", System.Guid.NewGuid().ToString("N"));
+            try
+            {
+                TableBuildStep.Pack($"{output}/Resources", $"{output}/Streaming", true);
+
+                Assert.That(CompiledCatalog.TryRead(File.ReadAllBytes($"{output}/Resources/Game/catalog.bytes"), out CatalogInfo catalog, out string error), Is.True, error);
+                Assert.That(catalog.TryGetLanguage(PseudoLocalization.Language, out _), Is.True);
+                Assert.That(CompiledTable.TryRead(File.ReadAllBytes($"{output}/Resources/Game/Pseudo/Shop.bytes"), out CompiledTable shop, out error), Is.True, error);
+                Assert.That(shop.LanguageHash, Is.EqualTo(PseudoLocalization.Language.Hash));
+                Assert.That(File.Exists($"{output}/Resources/Game/Pseudo/Inventory.bytes"), Is.True);
+            }
+            finally
+            {
+                Directory.Delete(output, true);
+            }
+        }
+
+        [Test]
+        public void Localizer_InTheEditor_ShowsThePseudoLanguage()
+        {
+            using Localizer localizer = new(new CatalogKey("Game"), new UnityHost());
+            localizer.InitializeAsync();
+
+            Assert.That(localizer.SetLanguageAsync(PseudoLocalization.Language).IsCompleted, Is.True);
+            Assert.That(localizer.CurrentLanguage.Key, Is.EqualTo(PseudoLocalization.Language));
+            Assert.That(localizer.Get(Purchase), Is.EqualTo("[B\u00FB\u00FD one]"));
+            Assert.That(localizer.Get(new EntryKey("Shop", "BuyButton")), Is.EqualTo("[B\u00FB\u00FD one]"));
+            Assert.That(localizer.Get(BalanceOf(21)), Is.EqualTo("[\u00DD\u00F6\u00FB \u0125\u00E5v\u00E9 21 \u00E7\u00F6\u00EE\u00F1\u0161. one two]"));
+        }
+
+        [Test]
+        public void CharacterSets_CollectWhatEachLanguageShows()
+        {
+            CatalogKey game = new("Game");
+
+            CharacterSet russian = CharacterSets.Collect(game, new LanguageKey("Russian"));
+            CharacterSet pseudo = CharacterSets.Collect(game, PseudoLocalization.Language);
+
+            Assert.That(CharacterSets.GetLanguages(game).Count, Is.EqualTo(3));
+            Assert.That(russian.Contains('K'), Is.True, "Its own text");
+            Assert.That(russian.Contains(0x0423), Is.True, "Its plural forms");
+            Assert.That(russian.Contains('S') && russian.Contains('w'), Is.True, "The English text of what it lacks");
+            Assert.That(russian.Contains('B'), Is.False, "English text it translates");
+            Assert.That(russian.Contains(0x00A0), Is.True, "Its group separator");
+            Assert.That(pseudo.Contains(0x00FB), Is.True);
+            Assert.That(CharacterSets.Collect(game, new LanguageKey("Klingon")), Is.Null);
         }
 
         [Test]
@@ -332,6 +384,11 @@ namespace reromanlee.ReactiveLocalizer.Tests
                 Assert.That(missing.Text, Does.Contain("Did you mean 'Shop.Purchase'?"));
                 Assert.That(elsewhere.Kind, Is.EqualTo(EntryPreviewKind.Broken));
                 Assert.That(EntryPreview.Describe(default).Kind, Is.EqualTo(EntryPreviewKind.Unpicked));
+
+                settings.PreviewLanguage = PseudoLocalization.LanguageName;
+                EntryDescription pseudo = EntryPreview.Describe(new EntryReference("Game", "Shop", "Purchase"));
+                Assert.That(pseudo.Text, Is.EqualTo("[B\u00FB\u00FD one]"));
+                Assert.That(pseudo.Tooltip, Is.Null);
             }
             finally
             {
@@ -370,6 +427,8 @@ namespace reromanlee.ReactiveLocalizer.Tests
                 Assert.That(preview.Get(Purchase), Is.EqualTo("Buy"));
                 settings.PreviewLanguage = "Russian";
                 Assert.That(preview.Get(Purchase), Is.EqualTo("Kupit"));
+                settings.PreviewLanguage = PseudoLocalization.LanguageName;
+                Assert.That(preview.Get(Purchase), Is.EqualTo("[B\u00FB\u00FD one]"));
                 settings.PreviewLanguage = "Klingon";
                 Assert.That(preview.Get(Purchase), Is.EqualTo("Buy"));
                 Assert.That(EditModePreview.For(new CatalogKey("Nowhere")), Is.Null);

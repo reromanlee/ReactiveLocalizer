@@ -12,6 +12,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
     {
         [SerializeField] private bool _isFailingBuildsOnErrors = true;
         [SerializeField] private bool _isCheckingPascalCase;
+        [SerializeField] private bool _isOfferingPseudoLocalization = true;
 
         /// <summary>Whether validation errors fail player builds. On by default; turning it off ships whatever the errors break.</summary>
         public bool IsFailingBuildsOnErrors
@@ -27,14 +28,32 @@ namespace reromanlee.ReactiveLocalizer.Editor
             set => Change(ref _isCheckingPascalCase, value);
         }
 
-        private void Change(ref bool field, bool value)
+        /// <summary>
+        /// Whether Play Mode and development builds offer the pseudo language as one of every catalog's languages. On by
+        /// default; the editor's preview always offers it, and release builds never do.
+        /// </summary>
+        public bool IsOfferingPseudoLocalization
+        {
+            get => _isOfferingPseudoLocalization;
+            set
+            {
+                if (Change(ref _isOfferingPseudoLocalization, value))
+                {
+                    // Localizers in Play Mode take the catalog again, with or without the language.
+                    Localizer.ReloadAll();
+                }
+            }
+        }
+
+        private bool Change(ref bool field, bool value)
         {
             if (field == value)
             {
-                return;
+                return false;
             }
             field = value;
             Save(true);
+            return true;
         }
 
         [SettingsProvider]
@@ -43,7 +62,7 @@ namespace reromanlee.ReactiveLocalizer.Editor
             return new SettingsProvider("Project/ReactiveLocalizer", SettingsScope.Project)
             {
                 label = "ReactiveLocalizer",
-                keywords = new[] { "localization", "validation", "build", "naming" },
+                keywords = new[] { "localization", "validation", "build", "naming", "pseudo" },
                 guiHandler = _ =>
                 {
                     LocalizationSettings settings = instance;
@@ -54,6 +73,9 @@ namespace reromanlee.ReactiveLocalizer.Editor
                     settings.IsCheckingPascalCase = EditorGUILayout.ToggleLeft(
                         new GUIContent("Check names against PascalCase", "Validation warns about table and entry names such as main_menu or playButton."),
                         settings.IsCheckingPascalCase);
+                    settings.IsOfferingPseudoLocalization = EditorGUILayout.ToggleLeft(
+                        new GUIContent("Pseudo-localization in Play Mode and development builds", "Every catalog gets the Pseudo language: its source text accented, a third longer and bracketed, so untranslated text, truncation and overflow show before any translation exists. Release builds never have it."),
+                        settings.IsOfferingPseudoLocalization);
                     EditorGUILayout.Space();
                     if (GUILayout.Button("Validate Now", GUILayout.Width(120f)))
                     {
