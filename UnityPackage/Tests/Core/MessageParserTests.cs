@@ -236,6 +236,32 @@ namespace reromanlee.ReactiveLocalizer.Tests
             Assert.That(failures, Is.Empty);
         }
 
+        [Test]
+        public void Quote_RoundTripsAnyTextInsideAPluralForm()
+        {
+            System.Random random = new(9);
+            const string alphabet = "{}'# ab";
+            List<string> failures = new();
+            for (int i = 0; i < 3000; i++)
+            {
+                char[] characters = new char[random.Next(1, 12)];
+                for (int c = 0; c < characters.Length; c++)
+                {
+                    characters[c] = alphabet[random.Next(alphabet.Length)];
+                }
+                string text = new(characters);
+                string message = "{n, plural, other {" + MessageQuoting.Quote(text, true, true) + "}}";
+                ParsedMessage parsed = MessageParser.Parse(message);
+                IReadOnlyList<MessagePart> parts = parsed.Body.Parts.Count == 1 && parsed.Body.Parts[0] is PluralPart plural ? plural.Cases[0].Body.Parts : null;
+                if (parsed.Issues.Count > 0 || parts == null || parts.Count != 1 || !(parts[0] is TextPart shown) || shown.Text != text)
+                {
+                    failures.Add($"{text} -> {message}");
+                }
+            }
+
+            Assert.That(failures, Is.Empty);
+        }
+
         private static MessageIssue FirstError(ParsedMessage message)
         {
             foreach (MessageIssue issue in message.Issues)
