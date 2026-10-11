@@ -34,7 +34,7 @@ jobs:
   # main didn't move in between. A push whose file tree already passed skips the Unity lane, and the run still succeeds;
   # any other push, such as one combining two pull requests, runs it all.
   gate:
-    name: Look for a run that passed on the same files
+    name: Check for an earlier pass
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -69,7 +69,7 @@ jobs:
 
   # Leaves the marker the gate looks for, named after the tested file tree, once every job passed.
   passed:
-    name: Mark the files as passed
+    name: Record this pass
     needs: unity
     runs-on: ubuntu-latest
     timeout-minutes: 5
