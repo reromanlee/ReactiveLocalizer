@@ -179,14 +179,35 @@ namespace reromanlee.ReactiveLocalizer.Tests
             string output = Path.Combine(Path.GetTempPath(), "ReactiveLocalizerPack", System.Guid.NewGuid().ToString("N"));
             try
             {
-                TableBuildStep.Pack($"{output}/Resources", $"{output}/Streaming");
+                TableBuildStep.Pack($"{output}/Resources", $"{output}/Streaming", false);
 
                 Assert.That(File.Exists($"{output}/Resources/Game/catalog.bytes"), Is.True);
+                Assert.That(Directory.Exists($"{output}/Resources/Game/Pseudo"), Is.False);
                 Assert.That(File.Exists($"{output}/Resources/Game/Russian/Shop.bytes"), Is.True);
                 Assert.That(File.Exists($"{output}/Resources/Game/English/Dialogue.bytes"), Is.False);
                 Assert.That(File.Exists($"{output}/Streaming/Game/English/Dialogue.bytes"), Is.True);
                 Assert.That(File.Exists($"{output}/Streaming/Game/Russian/Dialogue.bytes"), Is.True);
                 Assert.That(File.ReadAllText($"{output}/Resources/Game/streaming.bytes"), Is.EqualTo("English/Dialogue\nRussian/Dialogue\n"));
+            }
+            finally
+            {
+                Directory.Delete(output, true);
+            }
+        }
+
+        [Test]
+        public void Pack_ForADevelopmentBuild_AddsThePseudoLanguage()
+        {
+            string output = Path.Combine(Path.GetTempPath(), "ReactiveLocalizerPack", System.Guid.NewGuid().ToString("N"));
+            try
+            {
+                TableBuildStep.Pack($"{output}/Resources", $"{output}/Streaming", true);
+
+                Assert.That(CompiledCatalog.TryRead(File.ReadAllBytes($"{output}/Resources/Game/catalog.bytes"), out CatalogInfo catalog, out string error), Is.True, error);
+                Assert.That(catalog.TryGetLanguage(PseudoLocalization.Language, out _), Is.True);
+                Assert.That(CompiledTable.TryRead(File.ReadAllBytes($"{output}/Resources/Game/Pseudo/Shop.bytes"), out CompiledTable shop, out error), Is.True, error);
+                Assert.That(shop.LanguageHash, Is.EqualTo(PseudoLocalization.Language.Hash));
+                Assert.That(File.Exists($"{output}/Resources/Game/Pseudo/Inventory.bytes"), Is.True);
             }
             finally
             {
